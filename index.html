@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 9.99
+  版次 Version : 10.00
   最後更新 Updated: 2026-06-29
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-01  v10.00 調整縮放下限:大型心智圖可縮到低於 20% 以完整放進畫面,一般圖仍保留 20% 的操作手感,最低安全值為 3%。
      2026-07-01  v9.99  完善分隔線操作:資料層禁止分隔線收子節點,右鍵可插入到子節點最前/最後,拖曳提示顯示目標,加大抓取區並強化原始碼定位。
      2026-07-01  v9.98  右鍵選單新增「插入分隔線在上方/下方」,可直接在指定節點前後放入 Markdown 水平分隔線,避免只能靠拖曳定位。
      2026-06-29  v9.97  修正分隔線放在段落交界時被碰撞避讓推走:版面計算會把分隔線占用的視覺間隔納入子樹邊界,讓下一段節點自然讓位。
@@ -580,7 +581,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '9.99';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.00';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-01'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -822,6 +823,9 @@ let selection = new Set();    // 多選集合
 let scale = 1, panX = 80, panY = 0;
 const history = [];
 const redoStack = [];
+const MIN_ZOOM_SCALE = 0.03;
+const DEFAULT_MIN_ZOOM_SCALE = 0.2;
+const MAX_ZOOM_SCALE = 2.5;
 let searchMatches=[], searchMatchIds=new Set(), searchIdx=-1, currentMatchId=null;
 const STACK_GAP = 56;         // 多個根之間的間距
 // 多根輔助
@@ -1739,6 +1743,19 @@ function applyTransform(){
   viewport.style.backgroundSize = g+'px '+g+'px';
   viewport.style.backgroundPosition = panX+'px '+panY+'px';
   const z=document.getElementById('zoomPct'); if(z) z.textContent=Math.round(scale*100)+'%';
+}
+function mapFitScale(padding=80){
+  const w=parseFloat(svg.getAttribute('width'))||1, h=parseFloat(svg.getAttribute('height'))||1;
+  const vw=viewport.clientWidth||1, vh=viewport.clientHeight||1;
+  return Math.min(1, vw/(w+padding), vh/(h+padding));
+}
+function minZoomScale(){
+  if(!roots.length) return DEFAULT_MIN_ZOOM_SCALE;
+  const fitScale=mapFitScale(80);
+  return Math.max(MIN_ZOOM_SCALE, Math.min(DEFAULT_MIN_ZOOM_SCALE, fitScale*0.95));
+}
+function clampZoom(value){
+  return Math.min(MAX_ZOOM_SCALE, Math.max(minZoomScale(), value));
 }
 //===================== 右側原始 Markdown 面板(雙向同步) =====================
 const MD_LH=20, MD_PAD=10;
@@ -2895,7 +2912,7 @@ viewport.addEventListener('wheel', e=>{
   const mx=e.clientX-rect.left, my=e.clientY-rect.top, old=scale;
   let dy=e.deltaY; if(e.deltaMode===1) dy*=16; else if(e.deltaMode===2) dy*=rect.height;
   const k = e.ctrlKey ? 0.01 : 0.0018;   // 觸控板捏合用較大係數;一般滑鼠滾輪較平滑
-  scale=Math.min(2.5, Math.max(0.2, scale*Math.exp(-dy*k)));
+  scale=clampZoom(scale*Math.exp(-dy*k));
   panX=mx-(mx-panX)*(scale/old); panY=my-(my-panY)*(scale/old);
   applyTransform();
 },{passive:false});
@@ -2928,7 +2945,7 @@ viewport.addEventListener('touchmove', e=>{
     panX=touch.px+(t.clientX-touch.sx); panY=touch.py+(t.clientY-touch.sy); applyTransform();
   } else if(touch.mode==='pinch' && e.touches.length===2){
     clearLongPress();
-    const ns=Math.min(2.5, Math.max(0.2, touch.s0*tdist(e.touches)/touch.d0));
+    const ns=clampZoom(touch.s0*tdist(e.touches)/touch.d0);
     scale=ns; panX=touch.mx-(touch.mx-touch.px)*(ns/touch.s0); panY=touch.my-(touch.my-touch.py)*(ns/touch.s0); applyTransform();
   }
 },{passive:false});
@@ -3355,8 +3372,7 @@ function fit(){
   // compute content size from svg
   const w=parseFloat(svg.getAttribute('width'))||1, h=parseFloat(svg.getAttribute('height'))||1;
   const vw=viewport.clientWidth, vh=viewport.clientHeight;
-  scale=Math.min(1, Math.min(vw/(w+80), vh/(h+80)));
-  scale=Math.max(0.2,Math.min(scale,1));
+  scale=Math.max(MIN_ZOOM_SCALE, Math.min(1, Math.min(vw/(w+80), vh/(h+80))));
   // 放得下就置中;放不下則靠左留邊(確保根節點可見)
   panX = (w*scale <= vw) ? (vw - w*scale)/2 : 30;
   panY = (h*scale <= vh) ? (vh - h*scale)/2 : 20;
@@ -3370,7 +3386,7 @@ document.getElementById('zReset').onclick=fit;
 document.getElementById('zoomPct').onclick=()=>{ const vw=viewport.clientWidth/2, vh=viewport.clientHeight/2, old=scale;
   scale=1; panX=vw-(vw-panX)*(scale/old); panY=vh-(vh-panY)*(scale/old); applyTransform(); showToast('縮放已重設為 100%'); };
 function zoomCenter(f){ const vw=viewport.clientWidth/2, vh=viewport.clientHeight/2, old=scale;
-  scale=Math.min(2.5,Math.max(0.2,scale*f)); panX=vw-(vw-panX)*(scale/old); panY=vh-(vh-panY)*(scale/old); applyTransform(); }
+  scale=clampZoom(scale*f); panX=vw-(vw-panX)*(scale/old); panY=vh-(vh-panY)*(scale/old); applyTransform(); }
 
 //===================== 拖放檔案 =====================
 const dropEl=document.getElementById('drop');
@@ -3565,6 +3581,14 @@ function runMarkdownRuleSelfTest(options={}){
     add('序言後接 # 前的分隔線維持頂層', parsed[1] && parsed[1].kind==='hr' && !parsed[1].parent, parsed.map(n=>n.kind||n.title).join(','));
     const dragRule=runDragRuleSelfTest();
     add('分隔線拖曳規則支援插入與拖入', dragRule.ok, JSON.stringify(dragRule));
+    const oldW=svg.getAttribute('width'), oldH=svg.getAttribute('height');
+    svg.setAttribute('width', '20000'); svg.setAttribute('height', '12000');
+    const oldRoots=roots; roots=[makeNode('Zoom Test')];
+    const zmin=minZoomScale();
+    roots=oldRoots;
+    if(oldW==null) svg.removeAttribute('width'); else svg.setAttribute('width', oldW);
+    if(oldH==null) svg.removeAttribute('height'); else svg.setAttribute('height', oldH);
+    add('大型心智圖縮放下限可低於 20%', zmin < 0.2 && zmin >= MIN_ZOOM_SCALE, String(zmin));
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
