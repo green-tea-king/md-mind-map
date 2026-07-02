@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.05
-  最後更新 Updated: 2026-07-02
+  版次 Version : 10.06
+  最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.06 整理右鍵選單層級:節點操作、分隔線、剪貼簿、檔案、檢視與診斷/自檢分群;範本補上新功能說明。
      2026-07-02  v10.05 移除右鍵選單「插入到子節點最前/最後」兩項分隔線功能,保留上方/下方插入並同步更新自檢。
      2026-07-02  v10.04 新增手機操作入口:小螢幕顯示「操作」按鈕,可直接開啟檔案、匯出、置中、搜尋、原始碼、自檢與深色模式。
      2026-07-02  v10.03 新增匯出視覺一致性自檢:檢查 Canvas 尺寸、分隔線像素、表格像素、PDF 結構與匯出支援清單。
@@ -593,8 +594,8 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.05';        // 版次:小改 +0.1,大改 +1.0
-const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
+const APP_VERSION = '10.06';        // 版次:小改 +0.1,大改 +1.0
+const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const PREF_VERSION='9.82';
@@ -2442,9 +2443,10 @@ function runMobileEntrySelfTest(options={}){
     const btn=document.getElementById('mobileMenuBtn');
     add('手機操作按鈕存在', !!btn, btn?btn.textContent.trim():'missing');
     const menu=buildMainMenuItems();
-    add('手機入口共用檔案與檢視選單', !!(menu.fileSub&&menu.fileSub.length>=5&&menu.viewSub&&menu.viewSub.length>=8), `${menu.fileSub&&menu.fileSub.length}/${menu.viewSub&&menu.viewSub.length}`);
+    add('手機入口共用檔案、檢視與診斷選單', !!(menu.fileSub&&menu.fileSub.length>=5&&menu.viewSub&&menu.viewSub.length>=6&&menu.diagSub&&menu.diagSub.length>=5), `${menu.fileSub&&menu.fileSub.length}/${menu.viewSub&&menu.viewSub.length}/${menu.diagSub&&menu.diagSub.length}`);
     const viewLabels=(menu.viewSub||[]).map(x=>x.label||'').join('|');
-    add('手機入口包含原始碼與完整自檢', /原始 Markdown/.test(viewLabels) && /完整自檢/.test(viewLabels), viewLabels);
+    const diagLabels=(menu.diagSub||[]).map(x=>x.label||'').join('|');
+    add('手機入口包含原始碼與完整自檢', /原始 Markdown/.test(viewLabels) && /完整自檢/.test(diagLabels), viewLabels+' / '+diagLabels);
     if(btn){
       hideCtx();
       btn.click();
@@ -3543,22 +3545,24 @@ function buildMainMenuItems(){
       {label:'不自動換行', fn:()=>applyNodeWrapWidth('none', true)}
     ]},
     {label: debugLayout?'🧪 關閉版面除錯':'🧪 版面除錯', fn:toggleDebugLayout},
+    {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
+  ];
+  const diagSub = [
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
-    {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
   ];
-  return {fileSub, viewSub};
+  return {fileSub, viewSub, diagSub};
 }
 viewport.addEventListener('contextmenu', e=>{
   e.preventDefault();
   const nodeDom = roots.length ? e.target.closest('.node') : null;
   const hasClip = !!(clipboard && clipboard.length);
   const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
-  const {fileSub, viewSub}=buildMainMenuItems();
+  const {fileSub, viewSub, diagSub}=buildMainMenuItems();
   let items;
   if(nodeDom){
     const node=findByIdAll(nodeDom.dataset.id);
@@ -3577,29 +3581,38 @@ viewport.addEventListener('contextmenu', e=>{
     ];
     const iconSub = ICONS.map(ic=>({label:ic+'　加圖示', fn:()=>setIcon(ic)}));
     iconSub.push('—', {label:'✕ 清除圖示/待辦', fn:clickBtn('btnClearIcon')});
-    items=[
+    const structureSub=[
       {label:'＋ 子節點', key:'Tab', fn:addChild},
       {label:'＋ 同層節點', key:'Enter', fn:addSibling},
       {label:'＋ 父節點', key:'⇧Tab', fn:addParent},
+      {label:'⬆ 提升為中心主題', fn:detachToRoot, disabled:!node.parent},
+      {label: node.collapsed?'▶ 展開':'▼ 收合', fn:()=>toggleNodeCollapsed(node), disabled:!hasBranchChildren(node)}
+    ];
+    const dividerSub=[
       {label:'─ 插入分隔線在上方', fn:()=>insertHrNearNode(node,'before')},
-      {label:'─ 插入分隔線在下方', fn:()=>insertHrNearNode(node,'after')},
-      '—',
-      {label:'✏️ 編輯文字', key:'F2', fn:editSelected, disabled:multi},
-      {label: node.note==null ? '💬 增加註解' : '💬 編輯註解', fn:()=>editNodeNote(node), disabled:multi},
-      {label:'✕ 刪除註解', fn:()=>deleteNodeNote(node), disabled:multi || node.note==null},
-      {label:'🅰 文字格式', sub:fmtSub},
-      {label:'☑ 清單', sub:listSub},
-      {label:'⭐ 圖示', sub:iconSub},
-      '—',
+      {label:'─ 插入分隔線在下方', fn:()=>insertHrNearNode(node,'after')}
+    ];
+    const clipSub=[
       {label:'📋 複製', key:'⌃C', fn:copySelection},
       {label:'✂️ 剪下', key:'⌃X', fn:cutSelection},
       {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
-      {label:'🗑 刪除', key:'Del', fn:deleteNode},
-      {label:'⬆ 提升為中心主題', fn:detachToRoot, disabled:!node.parent},
-      {label: node.collapsed?'▶ 展開':'▼ 收合', fn:()=>toggleNodeCollapsed(node), disabled:!hasBranchChildren(node)},
+      {label:'🗑 刪除', key:'Del', fn:deleteNode}
+    ];
+    items=[
+      {label:'✏️ 編輯文字', key:'F2', fn:editSelected, disabled:multi},
+      {label: node.note==null ? '💬 增加註解' : '💬 編輯註解', fn:()=>editNodeNote(node), disabled:multi},
+      {label:'✕ 刪除註解', fn:()=>deleteNodeNote(node), disabled:multi || node.note==null},
+      '—',
+      {label:'➕ 節點操作', sub:structureSub},
+      {label:'─ 分隔線', sub:dividerSub},
+      {label:'🅰 文字格式', sub:fmtSub},
+      {label:'☑ 清單', sub:listSub},
+      {label:'⭐ 圖示', sub:iconSub},
+      {label:'📋 剪貼簿', sub:clipSub},
       '—',
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
+      {label:'🧪 診斷/自檢', sub:diagSub},
     ];
   } else {
     items=[
@@ -3608,6 +3621,7 @@ viewport.addEventListener('contextmenu', e=>{
       '—',
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
+      {label:'🧪 診斷/自檢', sub:diagSub},
       '—',
       {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
       {label:'▶ 全部收合', fn:()=>setAllCollapsed(true)},
@@ -3620,13 +3634,14 @@ if(mobileMenuBtn){
   mobileMenuBtn.onclick=e=>{
     e.preventDefault(); e.stopPropagation();
     const hasClip = !!(clipboard && clipboard.length);
-    const {fileSub, viewSub}=buildMainMenuItems();
+    const {fileSub, viewSub, diagSub}=buildMainMenuItems();
     const items=[
       {label:'✨ 新增中心主題', fn:addRoot},
       {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
       '—',
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
+      {label:'🧪 診斷/自檢', sub:diagSub},
       '—',
       {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
       {label:'▶ 全部收合', fn:()=>setAllCollapsed(true)},
@@ -4093,12 +4108,14 @@ Setext H2 寫法
 - 點文字列 → 心智圖會選取並置中對應節點
 - 即時編輯:在面板裡改 Markdown,心智圖會即時跟著更新
 - 調整:拖面板左緣可改寬度;開關與寬度都會自動記住
+- 大型檔案保護:貼入很多行 Markdown 時,同步會自動放慢,避免每打一字就卡住
 ## 💾 匯出與檔案
 - 匯出 .md:右鍵 → 檔案 → 匯出(或 Ctrl+S),100% 原生 Markdown
 - 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
+- 草稿復原:如果有未匯出的變更就離開,下次開啟會詢問是否復原
 ## 🎨 配色
 - 固定使用活力分支 Vivid 配色,不提供主題切換
 - 顏色只是畫面視覺辨識,不會寫進 .md;載入時自動上色
@@ -4108,6 +4125,9 @@ Setext H2 寫法
 - 深色介面:右鍵 → 檢視 → 深色或淺色(會記住選擇)
 - 搜尋:Ctrl+F,Enter 跳下一個、Shift+Enter 跳上一個
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
+- 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口與完整流程
+- 匯出自檢:會確認分隔線、表格、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
 ### 編輯結構
 - Tab 子節點 · Enter 同層 · Shift+Tab 父節點
