@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.01
+  版次 Version : 10.02
   最後更新 Updated: 2026-07-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-02  v10.02 新增大型 Markdown 效能保護:依文字量自動放慢原始碼即時同步、顯示大型檔案提示,並把工作量納入診斷與自檢。
      2026-07-02  v10.01 新增草稿自動復原、互動流程自檢與一鍵部署腳本;啟動時可復原未匯出草稿,右鍵可跑完整自檢。
      2026-07-01  v10.00 調整縮放下限:大型心智圖可縮到低於 20% 以完整放進畫面,一般圖仍保留 20% 的操作手感,最低安全值為 3%。
      2026-07-01  v9.99  完善分隔線操作:資料層禁止分隔線收子節點,右鍵可插入到子節點最前/最後,拖曳提示顯示目標,加大抓取區並強化原始碼定位。
@@ -582,7 +583,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.01';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.02';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -700,6 +701,48 @@ function applyNodeWrapWidth(value, rerender){
   if(rerender && roots.length){ renderKeepingAnchor(selected||roots[0], true); showToast('節點寬度已更新'); }
 }
 function loadNodeWrapWidth(){ let key='normal'; try{ key=localStorage.getItem('mm-node-wrap')||'normal'; }catch(e){ logCaught(e,'read node wrap width'); } applyNodeWrapWidth(key, false); }
+const PERF_WARN_LINES = 800;
+const PERF_HEAVY_LINES = 1600;
+const PERF_WARN_CHARS = 60000;
+const PERF_HEAVY_CHARS = 140000;
+const PERF_WARN_NODES = 900;
+const PERF_HEAVY_NODES = 1600;
+let lastMarkdownPerformance={lines:0, chars:0, nodes:0, large:false, heavy:false, parseMs:0, renderMs:0, debounceMs:300};
+function markdownPerfStats(text){
+  text=String(text||'');
+  const lines=text ? text.split('\n').length : 0;
+  const chars=text.length;
+  return {
+    lines,
+    chars,
+    large:lines>=PERF_WARN_LINES || chars>=PERF_WARN_CHARS,
+    heavy:lines>=PERF_HEAVY_LINES || chars>=PERF_HEAVY_CHARS
+  };
+}
+function markdownCommitDelay(text){
+  const s=markdownPerfStats(text);
+  return s.heavy ? 1200 : (s.large ? 700 : 300);
+}
+function updateMarkdownPerformance(stats, nodeCount, parseMs, renderMs, debounceMs){
+  const nodes=Number(nodeCount||0);
+  lastMarkdownPerformance={
+    lines:stats.lines,
+    chars:stats.chars,
+    nodes,
+    large:!!(stats.large || nodes>=PERF_WARN_NODES),
+    heavy:!!(stats.heavy || nodes>=PERF_HEAVY_NODES),
+    parseMs:Math.round(parseMs||0),
+    renderMs:Math.round(renderMs||0),
+    debounceMs:Math.round(debounceMs||markdownCommitDelay(''))
+  };
+  return lastMarkdownPerformance;
+}
+function markdownPerformanceLabel(perf){
+  perf=perf||lastMarkdownPerformance;
+  if(!perf || !perf.large) return '';
+  const level=perf.heavy ? '大型檔案保護中' : '大型檔案';
+  return `${level} · 同步延遲 ${perf.debounceMs||300}ms`;
+}
 function collectDiagnostics(){
   return {
     app:'MD心智圖',
@@ -713,6 +756,7 @@ function collectDiagnostics(){
     scale:Number(scale.toFixed(3)),
     saveState:hasUnsavedChanges()?'dirty':'saved',
     draft:autoDraftMeta(),
+    performance:lastMarkdownPerformance,
     nodeWrap:getComputedStyle(document.documentElement).getPropertyValue('--node-wrap-width').trim(),
     templateSelfTest:document.documentElement.dataset.templateSelfTest||'',
     templateSelfTestPassed:document.documentElement.dataset.templateSelfTestPassed||'',
@@ -1874,14 +1918,22 @@ function rebuildLineMapFromRoots(){
 function refreshMdPanel(fromText){
   if(!mdPanelOpen) return;
   if(mdInputTimer) return;   // 使用者仍在輸入時不回寫 textarea,避免舊計時器完成前文字被其他 render 覆蓋
+  let panelText=mdTextEl.value;
   if(fromText){ rebuildLineMapFromRoots(); }
   else {
     const rows=buildMdRows(roots); rebuildLineMapFromRows(rows);
     const text=rows.map(r=>r.t).join('\n')+'\n';
     if(mdTextEl.value!==text) mdTextEl.value=text;
+    panelText=text;
   }
   if(document.activeElement!==mdTextEl){ if(selected) highlightMdNode(selected); else setActiveMdLine(null); }
-  if(mdInfoEl){ const c=roots.reduce((s,r)=>s+countNodes(r),0); mdInfoEl.textContent='雙向同步 · '+mdLineToId.length+' 行 · '+c+' 節點'; }
+  if(mdInfoEl){
+    const c=roots.reduce((s,r)=>s+countNodes(r),0);
+    const stats=markdownPerfStats(panelText);
+    const perf=updateMarkdownPerformance(stats, c, lastMarkdownPerformance.parseMs, lastMarkdownPerformance.renderMs, markdownCommitDelay(panelText));
+    const label=markdownPerformanceLabel(perf);
+    mdInfoEl.textContent='雙向同步 · '+mdLineToId.length+' 行 · '+c+' 節點'+(label?' · '+label:'');
+  }
 }
 function setActiveMdLine(line){
   if(line==null || line<0){ mdHiEl.style.display='none'; mdActiveBlock=null; return; }
@@ -1913,15 +1965,26 @@ function syncMapToMdCursor(doCenter){
 function commitMdText(){
   clearTimeout(mdInputTimer); mdInputTimer=null;
   const text=mdTextEl.value; const curLine=lineAt(mdTextEl.selectionStart);
+  const stats=markdownPerfStats(text);
+  const t0=performance.now();
   roots=parseMarkdown(text);
+  const t1=performance.now();
   mdTextDriven=true; render(); mdTextDriven=false;
+  const t2=performance.now();
+  const perf=updateMarkdownPerformance(stats, roots.reduce((s,r)=>s+countNodes(r),0), t1-t0, t2-t1, markdownCommitDelay(text));
   const id=mdLineToId[curLine]; const n=id?findByIdAll(id):null;
   if(n){ selectOnly(n); refreshSelectionDom(); }
   setActiveMdLine(curLine);
+  const label=markdownPerformanceLabel(perf);
+  if(label && mdInfoEl) mdInfoEl.textContent='雙向同步 · '+mdLineToId.length+' 行 · '+perf.nodes+' 節點 · '+label;
 }
 function scheduleMdCommit(){
   if(!mdTyping){ snapshot(true); mdTyping=true; }
-  clearTimeout(mdInputTimer); mdInputTimer=setTimeout(commitMdText,300);
+  const delay=markdownCommitDelay(mdTextEl.value);
+  const stats=markdownPerfStats(mdTextEl.value);
+  updateMarkdownPerformance(stats, lastMarkdownPerformance.nodes, lastMarkdownPerformance.parseMs, lastMarkdownPerformance.renderMs, delay);
+  clearTimeout(mdInputTimer); mdInputTimer=setTimeout(commitMdText,delay);
+  if(stats.large && mdInfoEl) mdInfoEl.textContent='大型 Markdown 輸入中 · 已放慢即時同步避免卡頓 · '+stats.lines+' 行';
 }
 function finishMdTyping(){ flushPendingMdText(); mdTyping=false; }
 function toggleMdPanel(on){
@@ -3663,6 +3726,10 @@ function runMarkdownRuleSelfTest(options={}){
     if(oldW==null) svg.removeAttribute('width'); else svg.setAttribute('width', oldW);
     if(oldH==null) svg.removeAttribute('height'); else svg.setAttribute('height', oldH);
     add('大型心智圖縮放下限可低於 20%', zmin < 0.2 && zmin >= MIN_ZOOM_SCALE, String(zmin));
+    const smallDelay=markdownCommitDelay('# T\n- A\n');
+    const largeText='# Big\n'+Array.from({length:PERF_WARN_LINES+20},(_,i)=>'- node '+i).join('\n');
+    const heavyText='# Huge\n'+Array.from({length:PERF_HEAVY_LINES+20},(_,i)=>'- node '+i).join('\n');
+    add('大型 Markdown 會自動放慢即時同步', smallDelay===300 && markdownCommitDelay(largeText)>smallDelay && markdownCommitDelay(heavyText)>markdownCommitDelay(largeText), `${smallDelay}/${markdownCommitDelay(largeText)}/${markdownCommitDelay(heavyText)}`);
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
