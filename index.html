@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.00
-  最後更新 Updated: 2026-06-29
+  版次 Version : 10.01
+  最後更新 Updated: 2026-07-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-02  v10.01 新增草稿自動復原、互動流程自檢與一鍵部署腳本;啟動時可復原未匯出草稿,右鍵可跑完整自檢。
      2026-07-01  v10.00 調整縮放下限:大型心智圖可縮到低於 20% 以完整放進畫面,一般圖仍保留 20% 的操作手感,最低安全值為 3%。
      2026-07-01  v9.99  完善分隔線操作:資料層禁止分隔線收子節點,右鍵可插入到子節點最前/最後,拖曳提示顯示目標,加大抓取區並強化原始碼定位。
      2026-07-01  v9.98  右鍵選單新增「插入分隔線在上方/下方」,可直接在指定節點前後放入 Markdown 水平分隔線,避免只能靠拖曳定位。
@@ -581,8 +582,8 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.00';        // 版次:小改 +0.1,大改 +1.0
-const APP_DATE    = '2026-07-01'; // 最後更新日期 YYYY-MM-DD
+const APP_VERSION = '10.01';        // 版次:小改 +0.1,大改 +1.0
+const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const PREF_VERSION='9.82';
@@ -711,11 +712,16 @@ function collectDiagnostics(){
     orientation:orient,
     scale:Number(scale.toFixed(3)),
     saveState:hasUnsavedChanges()?'dirty':'saved',
+    draft:autoDraftMeta(),
     nodeWrap:getComputedStyle(document.documentElement).getPropertyValue('--node-wrap-width').trim(),
     templateSelfTest:document.documentElement.dataset.templateSelfTest||'',
     templateSelfTestPassed:document.documentElement.dataset.templateSelfTestPassed||'',
     markdownRuleSelfTest:document.documentElement.dataset.markdownRuleSelfTest||'',
     markdownRuleSelfTestPassed:document.documentElement.dataset.markdownRuleSelfTestPassed||'',
+    interactionSelfTest:document.documentElement.dataset.interactionSelfTest||'',
+    interactionSelfTestPassed:document.documentElement.dataset.interactionSelfTestPassed||'',
+    interactionSelfTestFailed:document.documentElement.dataset.interactionSelfTestFailed||'',
+    interactionSelfTestDetail:document.documentElement.dataset.interactionSelfTestDetail||'',
     errors:mmErrorLog.slice(-20)
   };
 }
@@ -3007,6 +3013,67 @@ const fileInput=document.getElementById('file');
 document.getElementById('btnOpen').onclick=()=>fileInput.click();
 fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); fileInput.value=''; };
 let savedMarkdown=null;
+const AUTO_DRAFT_KEY='mm-auto-draft-v1';
+let autoDraftTimer=null, autoDraftEnabled=false, lastDraftMarkdown='';
+function autoDraftMeta(){
+  try{
+    const raw=localStorage.getItem(AUTO_DRAFT_KEY);
+    if(!raw) return {exists:false};
+    const d=JSON.parse(raw);
+    return {exists:!!d.markdown, updatedAt:d.updatedAt||'', fileName:d.currentFileName||'', chars:String(d.markdown||'').length};
+  }catch(e){ return {exists:false, error:String(e&&e.message||e)}; }
+}
+function clearAutoDraft(){
+  clearTimeout(autoDraftTimer); autoDraftTimer=null; lastDraftMarkdown='';
+  try{ localStorage.removeItem(AUTO_DRAFT_KEY); }catch(e){ logCaught(e,'clear auto draft'); }
+}
+function scheduleAutoDraft(markdown){
+  if(!autoDraftEnabled) return;
+  markdown=String(markdown||'');
+  clearTimeout(autoDraftTimer);
+  autoDraftTimer=setTimeout(()=>saveAutoDraft(markdown),650);
+}
+function saveAutoDraft(markdown){
+  clearTimeout(autoDraftTimer); autoDraftTimer=null;
+  if(!autoDraftEnabled || !roots.length) return;
+  markdown=String(markdown||toMarkdown(roots));
+  if(!markdown || markdown===savedMarkdown){ clearAutoDraft(); return; }
+  if(markdown===lastDraftMarkdown) return;
+  const payload={
+    app:'MD心智圖',
+    version:APP_VERSION,
+    updatedAt:new Date().toISOString(),
+    markdown,
+    savedMarkdown:savedMarkdown||'',
+    currentName:currentName||null,
+    currentFileName:currentFileName||null,
+    originalMarkdownText:originalMarkdownText||null
+  };
+  try{
+    localStorage.setItem(AUTO_DRAFT_KEY, JSON.stringify(payload));
+    lastDraftMarkdown=markdown;
+  }catch(e){ logCaught(e,'save auto draft'); }
+}
+function restoreAutoDraftIfWanted(){
+  try{
+    const raw=localStorage.getItem(AUTO_DRAFT_KEY);
+    if(!raw) return false;
+    const d=JSON.parse(raw);
+    if(!d || !d.markdown) return false;
+    const when=d.updatedAt ? new Date(d.updatedAt).toLocaleString() : '未知時間';
+    const name=d.currentFileName ? `「${d.currentFileName}」` : '未命名檔案';
+    if(!confirm(`找到未匯出的自動草稿。\n\n來源:${name}\n時間:${when}\n\n要復原這份草稿嗎?`)) return false;
+    roots=parseMarkdown(d.markdown);
+    currentName=d.currentName||null;
+    currentFileName=d.currentFileName||null;
+    originalMarkdownText=d.originalMarkdownText||null;
+    savedMarkdown=d.savedMarkdown||'';
+    history.length=0; redoStack.length=0; clearSearch();
+    selectOnly(roots[0]||null);
+    lastDraftMarkdown=d.markdown;
+    return true;
+  }catch(e){ logCaught(e,'restore auto draft'); return false; }
+}
 function markSaved(){ savedMarkdown=roots.length ? toMarkdown(roots) : ''; refreshSaveState(); }
 function hasUnsavedChanges(){
   if(savedMarkdown==null && !roots.length) return false;
@@ -3014,11 +3081,13 @@ function hasUnsavedChanges(){
 }
 function refreshSaveState(){
   if(!saveStateEl) return;
-  const dirty=hasUnsavedChanges();
+  const current=roots.length ? toMarkdown(roots) : '';
+  const dirty=(savedMarkdown==null && !roots.length) ? false : current !== savedMarkdown;
   saveStateEl.textContent=dirty ? '未匯出' : '已匯出';
   saveStateEl.classList.toggle('dirty', dirty);
   saveStateEl.classList.toggle('saved', !dirty);
-  saveStateEl.title=dirty ? '目前內容尚未匯出 Markdown' : '目前內容已匯出或未變更';
+  saveStateEl.title=dirty ? '目前內容尚未匯出 Markdown,已自動保留復原草稿' : '目前內容已匯出或未變更';
+  if(dirty) scheduleAutoDraft(current); else if(autoDraftEnabled) clearAutoDraft();
 }
 function confirmReplace(){ return !hasUnsavedChanges() || confirm('目前內容尚未匯出保存,確定要放棄變更嗎?'); }
 function loadFile(file){
@@ -3261,6 +3330,7 @@ function runCommandSearch(){
     ['淺色',()=>applyDark(false)],
     ['範本自檢',()=>runTemplateSelfTest({toast:true,log:true})],
     ['Markdown 規則自檢',()=>runMarkdownRuleSelfTest({toast:true,log:true})],
+    ['完整自檢',()=>runMindMapFullSelfTest({toast:true,log:true})],
     ['複製診斷資訊',copyDiagnostics],
     ['節點寬度 40',()=>applyNodeWrapWidth('narrow',true)],
     ['節點寬度 50',()=>applyNodeWrapWidth('normal',true)],
@@ -3301,6 +3371,7 @@ viewport.addEventListener('contextmenu', e=>{
     {label: debugLayout?'🧪 關閉版面除錯':'🧪 版面除錯', fn:toggleDebugLayout},
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
+    {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
     {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
   ];
@@ -3395,7 +3466,10 @@ const dropEl=document.getElementById('drop');
   if(ev==='drop'||e.target===viewport) dropEl.classList.remove('show');}));
 viewport.addEventListener('drop',e=>{ e.preventDefault(); dropEl.classList.remove('show');
   const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
-window.addEventListener('beforeunload', e=>{ flushPendingMdText(); if(hasUnsavedChanges()){ e.preventDefault(); e.returnValue=''; } });
+window.addEventListener('beforeunload', e=>{
+  flushPendingMdText();
+  if(hasUnsavedChanges()){ saveAutoDraft(); e.preventDefault(); e.returnValue=''; }
+});
 
 //===================== 浮動工具視窗(拖曳 / 收合 / 記憶位置) =====================
 const FW_KEY='mm-fwpos5';   // 版號:工具視窗組成再變更(新增「清單」窗、文字窗加 S/🔗),重設一次排版
@@ -3602,6 +3676,69 @@ function runMarkdownRuleSelfTest(options={}){
   }
 }
 window.runMindMapMarkdownRuleSelfTest=runMarkdownRuleSelfTest;
+function runInteractionSelfTest(options={}){
+  const checks=[];
+  const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  try{
+    autoDraftEnabled=false;
+    roots=parseMarkdown('# 互動測試\n- 第一個節點\n- 第二個節點\n');
+    setParents(roots[0], null);
+    selected=roots[0].children[0]; selection=new Set([selected]);
+    render();
+    const first=roots[0].children[0], second=roots[0].children[1];
+    add('測試節點已渲染到畫布', !!canvas.querySelector(`.node[data-id="${first.id}"]`), first.id);
+    const before=insertHrNearNodeData(second, 'before');
+    add('右鍵分隔線插入前方邏輯可用', before && roots[0].children[roots[0].children.indexOf(second)-1].kind==='hr', 'before second');
+    const child=insertHrIntoChildrenData(first, 'last');
+    add('右鍵分隔線插入子清單尾端可用', child && first.children[first.children.length-1].kind==='hr', 'child last');
+    const dragRule=runDragRuleSelfTest();
+    add('拖曳分隔線規則自檢通過', dragRule.ok, JSON.stringify(dragRule));
+    render();
+    const cv=renderMapToCanvas({skipRender:true});
+    add('匯出畫布可產生內容', !!(cv && cv.width>0 && cv.height>0), cv?`${cv.width}x${cv.height}`:'no canvas');
+    svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
+    const zmin=minZoomScale();
+    add('大型圖縮放下限可低於 20% 且不小於安全下限', zmin>=MIN_ZOOM_SCALE && zmin<0.2, String(zmin));
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `完整自檢通過:${result.passed}/${checks.length}` : `完整自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'interaction self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'完整自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('完整自檢執行失敗');
+    return result;
+  }finally{
+    autoDraftEnabled=savedDraftEnabled;
+    roots=savedRoots;
+    scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after interaction self test'); }
+  }
+}
+function runMindMapFullSelfTest(options={}){
+  const groups=[
+    {name:'範本', result:runTemplateSelfTest({toast:false, log:options.log})},
+    {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
+    {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
+  ];
+  const checks=[];
+  for(const g of groups){ checks.push({name:g.name, ok:!!g.result.ok, detail:`${g.result.passed||0}/${(g.result.checks||[]).length}`}); }
+  const failed=checks.filter(c=>!c.ok);
+  const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks, groups};
+  if(options.log) console.table(checks);
+  if(options.toast) showToast(result.ok ? `完整自檢通過:${result.passed}/${checks.length}` : `完整自檢失敗:${failed.length} 組`);
+  return result;
+}
+window.runMindMapInteractionSelfTest=runInteractionSelfTest;
+window.runMindMapFullSelfTest=runMindMapFullSelfTest;
 
 //===================== 啟動範例 =====================
 const DEFAULT_MARKDOWN = `這是一段 Markdown 開頭序言,因為它寫在第一個 # 標題之前,所以會顯示成最上方的中心大泡泡。
@@ -3787,8 +3924,17 @@ const markdownRuleSelfTestResult=runMarkdownRuleSelfTest({toast:false});
 document.documentElement.dataset.markdownRuleSelfTest=markdownRuleSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.markdownRuleSelfTestPassed=String(markdownRuleSelfTestResult.passed);
 document.documentElement.dataset.markdownRuleSelfTestFailed=String(markdownRuleSelfTestResult.failed);
-selectOnly(roots[0]);
-markSaved();
+const interactionSelfTestResult=runInteractionSelfTest({toast:false});
+document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
+document.documentElement.dataset.interactionSelfTestFailed=String(interactionSelfTestResult.failed);
+document.documentElement.dataset.interactionSelfTestDetail=interactionSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+const restoredAutoDraft=restoreAutoDraftIfWanted();
+if(!restoredAutoDraft){
+  selectOnly(roots[0]);
+  markSaved();
+}
+autoDraftEnabled=true;
 render(); fit();   // 顏色由 render() 依目前主題即時套用(預設 Vivid)
 // 字體載入完成後,節點寬度會變化;重算一次版面,避免連接線與節點邊緣對不齊(出現空隙)
 if(document.fonts && document.fonts.ready){ document.fonts.ready.then(()=>{ try{ const a=selected; renderKeepingAnchor(a); }catch(e){ logCaught(e,'font-ready anchor render'); try{ render(); }catch(_){ logCaught(_,'font-ready fallback render'); } } }); }
