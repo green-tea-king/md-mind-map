@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.06
+  版次 Version : 10.07
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.07 集中管理偏好設定與命令面板:統一 localStorage key/helper,把命令搜尋改成可鍵盤操作的面板。
      2026-07-03  v10.06 整理右鍵選單層級:節點操作、分隔線、剪貼簿、檔案、檢視與診斷/自檢分群;範本補上新功能說明。
      2026-07-02  v10.05 移除右鍵選單「插入到子節點最前/最後」兩項分隔線功能,保留上方/下方插入並同步更新自檢。
      2026-07-02  v10.04 新增手機操作入口:小螢幕顯示「操作」按鈕,可直接開啟檔案、匯出、置中、搜尋、原始碼、自檢與深色模式。
@@ -380,6 +381,20 @@
   .ctxmenu button:disabled:hover{background:transparent;}
   .ctxmenu .mdiv{height:1px;background:var(--line);margin:4px 4px;}
   .ctxmenu .ctxhdr{font-size:11px;opacity:.6;padding:4px 11px 2px;cursor:default;}
+  .cmdpal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;
+    padding-top:min(14vh,110px);background:rgba(15,23,42,.22);z-index:10050;}
+  .cmdpal.show{display:flex;}
+  .cmdbox{width:min(560px,calc(100vw - 28px));background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 22px 60px rgba(20,40,80,.30);overflow:hidden;}
+  .cmdhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);
+    background:#eef2f7;color:#5a6470;font-size:12px;font-weight:700;}
+  #cmdInput{width:100%;border:none;outline:none;background:transparent;color:var(--txt);font:600 15px/1.4 system-ui,sans-serif;}
+  #cmdList{max-height:min(52vh,360px);overflow:auto;padding:6px;}
+  .cmditem{display:flex;width:100%;align-items:center;gap:10px;border:none;background:transparent;color:var(--txt);
+    padding:10px 11px;border-radius:8px;text-align:left;cursor:pointer;font:600 13px/1.35 system-ui,sans-serif;}
+  .cmditem small{margin-left:auto;color:#7b8794;font-weight:600;}
+  .cmditem:hover,.cmditem.active{background:var(--accent2);}
+  .cmdempty{padding:18px 12px;color:#7b8794;font-size:13px;text-align:center;}
   /* ===== 深色介面(切換 App 外觀;節點顏色固定使用 Vivid 自動調整)===== */
   html.dark{ --bg:#14171c; --panel:#232830; --line:#39414d; --txt:#e6e9ee; --accent2:#2a3340; color-scheme:dark; }
   html.dark #viewport{ background-color:#161a20;
@@ -394,6 +409,7 @@
   html.dark #searchInput{ color:var(--txt); background:transparent; }
   html.dark #searchBar button{ background:#2b313b; color:var(--txt); }
   html.dark .ctxmenu{ background:var(--panel); }
+  html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark #status{ background:rgba(20,23,28,.85); color:#aeb6c2; }
   html.dark .hint{ background:rgba(20,23,28,.6); color:#8b94a3; }
   html.dark #empty{ color:#8b94a3; }
@@ -510,6 +526,12 @@
 </div>
 <div id="ctxmenu" class="ctxmenu"></div>
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="cmdPalette" class="cmdpal" role="dialog" aria-modal="true" aria-label="命令面板">
+  <div class="cmdbox">
+    <div class="cmdhead"><span>⌘</span><input id="cmdInput" type="search" placeholder="搜尋命令..." autocomplete="off"></div>
+    <div id="cmdList"></div>
+  </div>
+</div>
 
 <!-- 浮動工具視窗(可拖曳標題列移動,點 — 收合) -->
 <div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span></div></div>
@@ -594,17 +616,58 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.06';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.07';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const PREF_VERSION='9.82';
-const PREF_KEYS=['mm-orient','mm-mdopen','mm-mdw','mm-fwpos5','mm-dark','mm-node-wrap'];
+const STORAGE_KEYS=Object.freeze({
+  prefVersion:'mm-pref-version',
+  orient:'mm-orient',
+  markdownPanelOpen:'mm-mdopen',
+  markdownPanelWidth:'mm-mdw',
+  floatingWindows:'mm-fwpos5',
+  darkMode:'mm-dark',
+  nodeWrap:'mm-node-wrap',
+  autoDraft:'mm-auto-draft-v1'
+});
+const PREF_KEYS=[
+  STORAGE_KEYS.orient,
+  STORAGE_KEYS.markdownPanelOpen,
+  STORAGE_KEYS.markdownPanelWidth,
+  STORAGE_KEYS.floatingWindows,
+  STORAGE_KEYS.darkMode,
+  STORAGE_KEYS.nodeWrap
+];
+function storageReport(err, context){
+  if(typeof logCaught==='function') return logCaught(err, context);
+  try{ console.warn('[MD心智圖]', context, err); }catch(_){}
+  return null;
+}
+function storageGet(key, fallback=null, context){
+  try{ const v=localStorage.getItem(key); return v==null ? fallback : v; }
+  catch(e){ storageReport(e, context||('read '+key)); return fallback; }
+}
+function storageSet(key, value, context){
+  try{ localStorage.setItem(key, String(value)); return true; }
+  catch(e){ storageReport(e, context||('save '+key)); return false; }
+}
+function storageRemove(key, context){
+  try{ localStorage.removeItem(key); return true; }
+  catch(e){ storageReport(e, context||('remove '+key)); return false; }
+}
+function storageJsonGet(key, fallback, context){
+  const raw=storageGet(key, null, context||('read '+key));
+  if(raw==null) return fallback;
+  try{ return JSON.parse(raw); }
+  catch(e){ storageReport(e, context||('parse '+key)); return fallback; }
+}
+function storageJsonSet(key, value, context){ return storageSet(key, JSON.stringify(value), context||('save '+key)); }
 (function(){
   try{
-    if(localStorage.getItem('mm-pref-version')!==PREF_VERSION){
-      for(const k of PREF_KEYS) localStorage.removeItem(k);
-      localStorage.setItem('mm-pref-version', PREF_VERSION);
+    if(storageGet(STORAGE_KEYS.prefVersion)!==PREF_VERSION){
+      for(const k of PREF_KEYS) storageRemove(k, 'migrate preference '+k);
+      storageSet(STORAGE_KEYS.prefVersion, PREF_VERSION, 'save preference version');
     }
   }catch(e){ try{ console.warn('[MD心智圖] preference migration', e); }catch(_){} }
 })();
@@ -708,10 +771,10 @@ function applyNodeWrapWidth(value, rerender){
   const allowed={narrow:'40em',normal:'50em',wide:'60em',none:'none'};
   const key=allowed[value]?value:'normal';
   document.documentElement.style.setProperty('--node-wrap-width', allowed[key]);
-  try{ localStorage.setItem('mm-node-wrap', key); }catch(e){ logCaught(e,'save node wrap width'); }
+  storageSet(STORAGE_KEYS.nodeWrap, key, 'save node wrap width');
   if(rerender && roots.length){ renderKeepingAnchor(selected||roots[0], true); showToast('節點寬度已更新'); }
 }
-function loadNodeWrapWidth(){ let key='normal'; try{ key=localStorage.getItem('mm-node-wrap')||'normal'; }catch(e){ logCaught(e,'read node wrap width'); } applyNodeWrapWidth(key, false); }
+function loadNodeWrapWidth(){ applyNodeWrapWidth(storageGet(STORAGE_KEYS.nodeWrap, 'normal', 'read node wrap width'), false); }
 const PERF_WARN_LINES = 800;
 const PERF_HEAVY_LINES = 1600;
 const PERF_WARN_CHARS = 60000;
@@ -769,6 +832,7 @@ function collectDiagnostics(){
     draft:autoDraftMeta(),
     performance:lastMarkdownPerformance,
     nodeWrap:getComputedStyle(document.documentElement).getPropertyValue('--node-wrap-width').trim(),
+    storageKeys:Object.keys(STORAGE_KEYS),
     templateSelfTest:document.documentElement.dataset.templateSelfTest||'',
     templateSelfTestPassed:document.documentElement.dataset.templateSelfTestPassed||'',
     markdownRuleSelfTest:document.documentElement.dataset.markdownRuleSelfTest||'',
@@ -780,6 +844,10 @@ function collectDiagnostics(){
     mobileEntrySelfTest:document.documentElement.dataset.mobileEntrySelfTest||'',
     mobileEntrySelfTestPassed:document.documentElement.dataset.mobileEntrySelfTestPassed||'',
     mobileEntrySelfTestFailed:document.documentElement.dataset.mobileEntrySelfTestFailed||'',
+    commandPaletteSelfTest:document.documentElement.dataset.commandPaletteSelfTest||'',
+    commandPaletteSelfTestPassed:document.documentElement.dataset.commandPaletteSelfTestPassed||'',
+    commandPaletteSelfTestFailed:document.documentElement.dataset.commandPaletteSelfTestFailed||'',
+    commandPaletteSelfTestDetail:document.documentElement.dataset.commandPaletteSelfTestDetail||'',
     interactionSelfTest:document.documentElement.dataset.interactionSelfTest||'',
     interactionSelfTestPassed:document.documentElement.dataset.interactionSelfTestPassed||'',
     interactionSelfTestFailed:document.documentElement.dataset.interactionSelfTestFailed||'',
@@ -1267,7 +1335,7 @@ const HGAP = 54, VGAP = 14;       // 橫式:欄距 / 同層垂直間距
 const ROWGAP = 58, COLGAP = 26;   // 直式:列距 / 同層水平間距
 const TRUNK_GAP = 28;             // 幹線(分支交點)距父節點的距離;連線與開關鈕共用
 let orient = 'h';                 // 'h' 主節點在左、分支往右;'v' 主節點在上、分支往下
-try{ const o=localStorage.getItem('mm-orient'); if(o==='v'||o==='h') orient=o; }catch(e){ logCaught(e,'read orientation preference'); }
+{ const o=storageGet(STORAGE_KEYS.orient, null, 'read orientation preference'); if(o==='v'||o==='h') orient=o; }
 
 function isBranchNode(n){ return !!n && n.kind!=='hr'; }
 function visibleChildren(n){ return n.kind==='hr' ? [] : (n.collapsed ? [] : n.children); }
@@ -2008,7 +2076,7 @@ function finishMdTyping(){ flushPendingMdText(); mdTyping=false; }
 function toggleMdPanel(on){
   mdPanelOpen = (on===undefined) ? !mdPanelOpen : !!on;
   document.documentElement.classList.toggle('md-open', mdPanelOpen);
-  try{ localStorage.setItem('mm-mdopen', mdPanelOpen?'1':'0'); }catch(e){ logCaught(e,'save markdown panel open state'); }
+  storageSet(STORAGE_KEYS.markdownPanelOpen, mdPanelOpen?'1':'0', 'save markdown panel open state');
   if(mdPanelOpen) render(); else setActiveMdLine(null);
 }
 mdTextEl.addEventListener('input', ()=>{ setActiveMdLine(lineAt(mdTextEl.selectionStart)); scheduleMdCommit(); });
@@ -2029,9 +2097,9 @@ document.getElementById('mdTab').onclick=()=>toggleMdPanel(true);
   window.addEventListener('mousemove', e=>{ if(!d) return; let w=d.w-(e.clientX-d.x);
     w=Math.max(240,Math.min(680,w)); document.documentElement.style.setProperty('--mdw', w+'px');
     if(mdActiveBlock) mdHiEl.style.top=(MD_PAD + mdActiveBlock.a*MD_LH - mdTextEl.scrollTop)+'px'; });
-  window.addEventListener('mouseup', ()=>{ if(d){ try{ localStorage.setItem('mm-mdw',(getComputedStyle(document.documentElement).getPropertyValue('--mdw')||'').trim()); }catch(e){ logCaught(e,'save markdown panel width'); } document.body.style.userSelect=''; } d=null; });
+  window.addEventListener('mouseup', ()=>{ if(d){ storageSet(STORAGE_KEYS.markdownPanelWidth, (getComputedStyle(document.documentElement).getPropertyValue('--mdw')||'').trim(), 'save markdown panel width'); document.body.style.userSelect=''; } d=null; });
 })();
-(function(){ try{ const w=localStorage.getItem('mm-mdw'); if(w) document.documentElement.style.setProperty('--mdw', w); }catch(e){ logCaught(e,'read markdown panel width'); } })();
+(function(){ const w=storageGet(STORAGE_KEYS.markdownPanelWidth, '', 'read markdown panel width'); if(w) document.documentElement.style.setProperty('--mdw', w); })();
 
 //===================== 匯出圖片 / PDF(純前端 Canvas,無外部相依) =====================
 const EXPORT_SUPPORT={
@@ -3149,6 +3217,7 @@ viewport.addEventListener('touchcancel', ()=>{ clearLongPress(); touch=null; lon
 window.addEventListener('keydown', e=>{
   const _inTa = document.activeElement && document.activeElement.tagName==='TEXTAREA';
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='f' && !_inTa){ e.preventDefault(); openSearch(); return; }
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k' && !_inTa){ e.preventDefault(); runCommandSearch(); return; }
   const ae=document.activeElement; const inField = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.isContentEditable);
   if(editing || inField) return;
   if((e.ctrlKey||e.metaKey) && (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))){ e.preventDefault(); redo(); return; }
@@ -3190,19 +3259,16 @@ const fileInput=document.getElementById('file');
 document.getElementById('btnOpen').onclick=()=>fileInput.click();
 fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); fileInput.value=''; };
 let savedMarkdown=null;
-const AUTO_DRAFT_KEY='mm-auto-draft-v1';
+const AUTO_DRAFT_KEY=STORAGE_KEYS.autoDraft;
 let autoDraftTimer=null, autoDraftEnabled=false, lastDraftMarkdown='';
 function autoDraftMeta(){
-  try{
-    const raw=localStorage.getItem(AUTO_DRAFT_KEY);
-    if(!raw) return {exists:false};
-    const d=JSON.parse(raw);
-    return {exists:!!d.markdown, updatedAt:d.updatedAt||'', fileName:d.currentFileName||'', chars:String(d.markdown||'').length};
-  }catch(e){ return {exists:false, error:String(e&&e.message||e)}; }
+  const d=storageJsonGet(AUTO_DRAFT_KEY, null, 'read auto draft');
+  if(!d) return {exists:false};
+  return {exists:!!d.markdown, updatedAt:d.updatedAt||'', fileName:d.currentFileName||'', chars:String(d.markdown||'').length};
 }
 function clearAutoDraft(){
   clearTimeout(autoDraftTimer); autoDraftTimer=null; lastDraftMarkdown='';
-  try{ localStorage.removeItem(AUTO_DRAFT_KEY); }catch(e){ logCaught(e,'clear auto draft'); }
+  storageRemove(AUTO_DRAFT_KEY, 'clear auto draft');
 }
 function scheduleAutoDraft(markdown){
   if(!autoDraftEnabled) return;
@@ -3226,16 +3292,12 @@ function saveAutoDraft(markdown){
     currentFileName:currentFileName||null,
     originalMarkdownText:originalMarkdownText||null
   };
-  try{
-    localStorage.setItem(AUTO_DRAFT_KEY, JSON.stringify(payload));
-    lastDraftMarkdown=markdown;
-  }catch(e){ logCaught(e,'save auto draft'); }
+  if(storageJsonSet(AUTO_DRAFT_KEY, payload, 'save auto draft')) lastDraftMarkdown=markdown;
 }
 function restoreAutoDraftIfWanted(){
   try{
-    const raw=localStorage.getItem(AUTO_DRAFT_KEY);
-    if(!raw) return false;
-    const d=JSON.parse(raw);
+    const d=storageJsonGet(AUTO_DRAFT_KEY, null, 'read auto draft');
+    if(!d) return false;
     if(!d || !d.markdown) return false;
     const when=d.updatedAt ? new Date(d.updatedAt).toLocaleString() : '未知時間';
     const name=d.currentFileName ? `「${d.currentFileName}」` : '未命名檔案';
@@ -3304,7 +3366,7 @@ document.getElementById('btnParent').onclick=addParent;
 document.getElementById('btnFit').onclick=fit;
 document.getElementById('btnOrient').onclick=()=>{
   orient = orient==='h' ? 'v' : 'h';
-  try{ localStorage.setItem('mm-orient', orient); }catch(e){ logCaught(e,'save orientation preference'); }
+  storageSet(STORAGE_KEYS.orient, orient, 'save orientation preference');
   render(); fit();
 };
 
@@ -3494,34 +3556,78 @@ function wireMenuKeyboard(menu){
     else if(e.key==='Escape'){ e.preventDefault(); hideCtx(); }
   });
 }
-function runCommandSearch(){
-  const commands=[
-    ['新建',()=>document.getElementById('btnNew').click()],
-    ['開啟',()=>document.getElementById('btnOpen').click()],
-    ['匯出 Markdown',exportMd],
-    ['匯出 JPG',exportJPG],
-    ['匯出 PDF',exportPDF],
-    ['搜尋',openSearch],
-    ['置中',fit],
-    ['深色',()=>applyDark(true)],
-    ['淺色',()=>applyDark(false)],
-    ['範本自檢',()=>runTemplateSelfTest({toast:true,log:true})],
-    ['Markdown 規則自檢',()=>runMarkdownRuleSelfTest({toast:true,log:true})],
-    ['匯出自檢',()=>runExportSelfTest({toast:true,log:true})],
-    ['手機入口自檢',()=>runMobileEntrySelfTest({toast:true,log:true})],
-    ['完整自檢',()=>runMindMapFullSelfTest({toast:true,log:true})],
-    ['複製診斷資訊',copyDiagnostics],
-    ['節點寬度 40',()=>applyNodeWrapWidth('narrow',true)],
-    ['節點寬度 50',()=>applyNodeWrapWidth('normal',true)],
-    ['節點寬度 60',()=>applyNodeWrapWidth('wide',true)],
-    ['不自動換行',()=>applyNodeWrapWidth('none',true)]
+const cmdPaletteEl=document.getElementById('cmdPalette');
+const cmdInputEl=document.getElementById('cmdInput');
+const cmdListEl=document.getElementById('cmdList');
+let cmdActiveIndex=0, cmdMatches=[];
+function getCommandItems(){
+  const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
+  return [
+    {label:'新建', hint:'檔案', aliases:'new blank', fn:clickBtn('btnNew')},
+    {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:clickBtn('btnOpen')},
+    {label:'匯出 Markdown', hint:'檔案', aliases:'save export md', fn:exportMd},
+    {label:'匯出 JPG', hint:'檔案', aliases:'image export', fn:exportJPG},
+    {label:'匯出 PDF', hint:'檔案', aliases:'pdf export', fn:exportPDF},
+    {label:'搜尋節點', hint:'檢視', aliases:'find search', fn:openSearch},
+    {label:'置中縮放', hint:'檢視', aliases:'fit center zoom', fn:fit},
+    {label:'切換方向', hint:'檢視', aliases:'orient horizontal vertical', fn:clickBtn('btnOrient')},
+    {label:'深色介面', hint:'外觀', aliases:'dark mode', fn:()=>applyDark(true)},
+    {label:'淺色介面', hint:'外觀', aliases:'light mode', fn:()=>applyDark(false)},
+    {label:'節點寬度 40 字', hint:'版面', aliases:'wrap narrow', fn:()=>applyNodeWrapWidth('narrow',true)},
+    {label:'節點寬度 50 字', hint:'版面', aliases:'wrap normal', fn:()=>applyNodeWrapWidth('normal',true)},
+    {label:'節點寬度 60 字', hint:'版面', aliases:'wrap wide', fn:()=>applyNodeWrapWidth('wide',true)},
+    {label:'不自動換行', hint:'版面', aliases:'wrap none', fn:()=>applyNodeWrapWidth('none',true)},
+    {label:'範本自檢', hint:'診斷', aliases:'test template', fn:()=>runTemplateSelfTest({toast:true,log:true})},
+    {label:'Markdown 規則自檢', hint:'診斷', aliases:'test markdown rules', fn:()=>runMarkdownRuleSelfTest({toast:true,log:true})},
+    {label:'匯出自檢', hint:'診斷', aliases:'test export', fn:()=>runExportSelfTest({toast:true,log:true})},
+    {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
+    {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
+    {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
+    {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
   ];
-  const q=(prompt('輸入命令關鍵字', '')||'').trim().toLowerCase();
-  if(!q) return;
-  const hit=commands.find(([label])=>label.toLowerCase().includes(q));
-  if(hit){ hit[1](); showToast('已執行: '+hit[0]); }
-  else showToast('找不到命令');
 }
+function commandSearchText(cmd){ return (cmd.label+' '+(cmd.hint||'')+' '+(cmd.aliases||'')).toLowerCase(); }
+function renderCommandPalette(){
+  const q=(cmdInputEl.value||'').trim().toLowerCase();
+  cmdMatches=getCommandItems().filter(cmd=>!q || commandSearchText(cmd).includes(q));
+  if(cmdActiveIndex>=cmdMatches.length) cmdActiveIndex=Math.max(0, cmdMatches.length-1);
+  clearTrustedHTML(cmdListEl);
+  if(!cmdMatches.length){
+    const empty=document.createElement('div'); empty.className='cmdempty'; empty.textContent='找不到符合的命令';
+    cmdListEl.appendChild(empty); return;
+  }
+  cmdMatches.forEach((cmd,i)=>{
+    const b=document.createElement('button');
+    b.type='button'; b.className='cmditem'+(i===cmdActiveIndex?' active':'');
+    const label=document.createElement('span'); label.textContent=cmd.label; b.appendChild(label);
+    if(cmd.hint){ const small=document.createElement('small'); small.textContent=cmd.hint; b.appendChild(small); }
+    b.onclick=()=>executeCommand(cmd);
+    cmdListEl.appendChild(b);
+  });
+}
+function executeCommand(cmd){
+  if(!cmd) return;
+  closeCommandPalette();
+  cmd.fn();
+  showToast('已執行: '+cmd.label);
+}
+function runCommandSearch(){
+  hideCtx();
+  cmdActiveIndex=0;
+  cmdPaletteEl.classList.add('show');
+  cmdInputEl.value='';
+  renderCommandPalette();
+  setTimeout(()=>{ if(cmdPaletteEl.classList.contains('show')) cmdInputEl.focus(); },0);
+}
+function closeCommandPalette(){ cmdPaletteEl.classList.remove('show'); }
+cmdInputEl.addEventListener('input', ()=>{ cmdActiveIndex=0; renderCommandPalette(); });
+cmdInputEl.addEventListener('keydown', e=>{
+  if(e.key==='ArrowDown'){ e.preventDefault(); cmdActiveIndex=Math.min(cmdActiveIndex+1, Math.max(0, cmdMatches.length-1)); renderCommandPalette(); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); cmdActiveIndex=Math.max(cmdActiveIndex-1, 0); renderCommandPalette(); }
+  else if(e.key==='Enter'){ e.preventDefault(); executeCommand(cmdMatches[cmdActiveIndex]); }
+  else if(e.key==='Escape'){ e.preventDefault(); closeCommandPalette(); }
+});
+cmdPaletteEl.addEventListener('mousedown', e=>{ if(e.target===cmdPaletteEl) closeCommandPalette(); });
 function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
   const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
@@ -3536,7 +3642,7 @@ function buildMainMenuItems(){
     {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
     {label:'🎯 置中', fn:fit},
     {label:'🔍 搜尋', key:'⌃F', fn:openSearch},
-    {label:'⌘ 命令搜尋', fn:runCommandSearch},
+    {label:'⌘ 命令面板', key:'⌃K', fn:runCommandSearch},
     {label:'🔀 切換方向(橫/直)', fn:clickBtn('btnOrient')},
     {label:'↔ 節點寬度', sub:[
       {label:'40 字', fn:()=>applyNodeWrapWidth('narrow', true)},
@@ -3552,6 +3658,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
+    {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
   ];
@@ -3689,9 +3796,9 @@ window.addEventListener('beforeunload', e=>{
 });
 
 //===================== 浮動工具視窗(拖曳 / 收合 / 記憶位置) =====================
-const FW_KEY='mm-fwpos5';   // 版號:工具視窗組成再變更(新增「清單」窗、文字窗加 S/🔗),重設一次排版
-let fwPos={}; try{ fwPos=JSON.parse(localStorage.getItem(FW_KEY))||{}; }catch(e){ logCaught(e,'read floating window positions'); fwPos={}; }
-function saveFwPos(){ try{ localStorage.setItem(FW_KEY, JSON.stringify(fwPos)); }catch(e){ logCaught(e,'save floating window positions'); } }
+const FW_KEY=STORAGE_KEYS.floatingWindows;   // 版號:工具視窗組成再變更(新增「清單」窗、文字窗加 S/🔗),重設一次排版
+let fwPos=storageJsonGet(FW_KEY, {}, 'read floating window positions')||{};
+function saveFwPos(){ storageJsonSet(FW_KEY, fwPos, 'save floating window positions'); }
 let fwZ=100;
 
 // 預設排版:靠左單欄、由上往下依重要性排列(檔案→編輯→檢視→配色→標記→主題);
@@ -3732,7 +3839,7 @@ document.querySelectorAll('.fwcollapse').forEach(b=>{
 });
 // 還原工具列:清掉記憶位置與收合狀態,重新依預設排列
 function resetFloatWins(){
-  fwPos={}; try{ localStorage.removeItem(FW_KEY); }catch(e){ logCaught(e,'reset floating window positions'); }
+  fwPos={}; storageRemove(FW_KEY, 'reset floating window positions');
   document.querySelectorAll('.floatwin').forEach(w=>{ w.classList.remove('collapsed'); w.style.removeProperty('z-index'); });
   document.querySelectorAll('.fwcollapse').forEach(b=>{ b.textContent='–'; b.title='收合'; });
   placeFloatWins();
@@ -3741,7 +3848,7 @@ document.getElementById('btnResetUI').onclick=resetFloatWins;
 // 淺色 / 深色 介面切換(預設跟隨系統,手動切換會記住)
 function applyDark(on){ document.documentElement.classList.toggle('dark', on);
   const b=document.getElementById('btnDark'); if(b){ b.textContent = on ? '☀️ 淺色' : '🌙 深色'; b.title = on ? '切換為淺色介面' : '切換為深色介面'; }
-  try{ localStorage.setItem('mm-dark', on?'1':'0'); }catch(e){ logCaught(e,'save dark mode preference'); }
+  storageSet(STORAGE_KEYS.darkMode, on?'1':'0', 'save dark mode preference');
   if(typeof render==='function' && roots.length) render();   // 重新上色(中心色深淺隨介面)
 }
 function toggleDebugLayout(){
@@ -3750,7 +3857,7 @@ function toggleDebugLayout(){
   render();
   showToast(debugLayout?'版面除錯已開啟':'版面除錯已關閉');
 }
-(function(){ let pref=null; try{ pref=localStorage.getItem('mm-dark'); }catch(e){ logCaught(e,'read dark mode preference'); }
+(function(){ let pref=storageGet(STORAGE_KEYS.darkMode, null, 'read dark mode preference');
   applyDark(pref==='1'); })();   // 預設淺色;使用者手動切換才記住深色
 document.getElementById('btnDark').onclick=()=>applyDark(!document.documentElement.classList.contains('dark'));
 loadNodeWrapWidth();
@@ -3955,6 +4062,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
     {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
+    {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
   const checks=[];
@@ -3965,7 +4073,35 @@ function runMindMapFullSelfTest(options={}){
   if(options.toast) showToast(result.ok ? `完整自檢通過:${result.passed}/${checks.length}` : `完整自檢失敗:${failed.length} 組`);
   return result;
 }
+function runCommandPaletteSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  try{
+    const commands=getCommandItems();
+    add('命令清單有基本項目', commands.length>=16, String(commands.length));
+    add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢'), commands.map(c=>c.label).join(','));
+    add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
+    runCommandSearch();
+    cmdInputEl.value='pdf'; renderCommandPalette();
+    add('命令搜尋可過濾', cmdMatches.some(c=>c.label==='匯出 PDF'), cmdMatches.map(c=>c.label).join(','));
+    closeCommandPalette();
+    add('命令面板可關閉', !cmdPaletteEl.classList.contains('show'), cmdPaletteEl.className);
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `命令面板自檢通過:${result.passed}/${checks.length}` : `命令面板自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'command palette self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'命令面板自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('命令面板自檢執行失敗');
+    return result;
+  }finally{
+    closeCommandPalette();
+  }
+}
 window.runMindMapInteractionSelfTest=runInteractionSelfTest;
+window.runCommandPaletteSelfTest=runCommandPaletteSelfTest;
 window.runMindMapFullSelfTest=runMindMapFullSelfTest;
 
 //===================== 啟動範例 =====================
@@ -4124,9 +4260,10 @@ Setext H2 寫法
 - 置中:右鍵 → 檢視 → 置中,或右下角 ＋／－ 縮放、⤢ 重置
 - 深色介面:右鍵 → 檢視 → 深色或淺色(會記住選擇)
 - 搜尋:Ctrl+F,Enter 跳下一個、Shift+Enter 跳上一個
+- 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口、命令面板與完整流程
 - 匯出自檢:會確認分隔線、表格、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
 ### 編輯結構
@@ -4137,7 +4274,7 @@ Setext H2 寫法
 - Ctrl+C 複製 · Ctrl+X 剪下 · Ctrl+V 貼上
 ### 格式 · 檔案
 - Ctrl+B 粗體 · Ctrl+I 斜體
-- Ctrl+F 搜尋 · Ctrl+S 匯出存檔
+- Ctrl+F 搜尋 · Ctrl+K 命令面板 · Ctrl+S 匯出存檔
 
 # 多中心示範
 ## 同一張畫布可放多個中心
@@ -4166,6 +4303,11 @@ const mobileEntrySelfTestResult=runMobileEntrySelfTest({toast:false});
 document.documentElement.dataset.mobileEntrySelfTest=mobileEntrySelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.mobileEntrySelfTestPassed=String(mobileEntrySelfTestResult.passed);
 document.documentElement.dataset.mobileEntrySelfTestFailed=String(mobileEntrySelfTestResult.failed);
+const commandPaletteSelfTestResult=runCommandPaletteSelfTest({toast:false});
+document.documentElement.dataset.commandPaletteSelfTest=commandPaletteSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.commandPaletteSelfTestPassed=String(commandPaletteSelfTestResult.passed);
+document.documentElement.dataset.commandPaletteSelfTestFailed=String(commandPaletteSelfTestResult.failed);
+document.documentElement.dataset.commandPaletteSelfTestDetail=commandPaletteSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 const interactionSelfTestResult=runInteractionSelfTest({toast:false});
 document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
@@ -4180,7 +4322,7 @@ autoDraftEnabled=true;
 render(); fit();   // 顏色由 render() 依目前主題即時套用(預設 Vivid)
 // 字體載入完成後,節點寬度會變化;重算一次版面,避免連接線與節點邊緣對不齊(出現空隙)
 if(document.fonts && document.fonts.ready){ document.fonts.ready.then(()=>{ try{ const a=selected; renderKeepingAnchor(a); }catch(e){ logCaught(e,'font-ready anchor render'); try{ render(); }catch(_){ logCaught(_,'font-ready fallback render'); } } }); }
-(function(){ let op=null; try{ op=localStorage.getItem('mm-mdopen'); }catch(e){ logCaught(e,'read markdown panel open state'); } if(op==='1') toggleMdPanel(true); })();
+(function(){ const op=storageGet(STORAGE_KEYS.markdownPanelOpen, null, 'read markdown panel open state'); if(op==='1') toggleMdPanel(true); })();
 </script>
 </body>
 </html>
