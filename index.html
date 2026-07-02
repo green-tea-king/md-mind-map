@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.04
+  版次 Version : 10.05
   最後更新 Updated: 2026-07-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-02  v10.05 移除右鍵選單「插入到子節點最前/最後」兩項分隔線功能,保留上方/下方插入並同步更新自檢。
      2026-07-02  v10.04 新增手機操作入口:小螢幕顯示「操作」按鈕,可直接開啟檔案、匯出、置中、搜尋、原始碼、自檢與深色模式。
      2026-07-02  v10.03 新增匯出視覺一致性自檢:檢查 Canvas 尺寸、分隔線像素、表格像素、PDF 結構與匯出支援清單。
      2026-07-02  v10.02 新增大型 Markdown 效能保護:依文字量自動放慢原始碼即時同步、顯示大型檔案提示,並把工作量納入診斷與自檢。
@@ -592,7 +593,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.04';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.05';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -2734,25 +2735,6 @@ function insertHrNearNode(target, mode){
   showToast(mode==='before' ? '已在上方插入分隔線' : '已在下方插入分隔線');
   return true;
 }
-function insertHrIntoChildrenData(target, mode){
-  if(!target || !isBranchNode(target) || (mode!=='first' && mode!=='last')) return false;
-  const hr=makeHrNode();
-  hr.parent=target;
-  if(mode==='first') target.children.unshift(hr);
-  else target.children.push(hr);
-  return hr;
-}
-function insertHrIntoChildren(target, mode){
-  snapshot();
-  const hr=insertHrIntoChildrenData(target, mode);
-  if(!hr) return false;
-  target.collapsed=false;
-  selectOnly(hr);
-  render();
-  centerOn(hr);
-  showToast(mode==='first' ? '已插入到子節點最前' : '已插入到子節點最後');
-  return true;
-}
 function pickDropModeForTarget(movers, target, rel){
   const list=siblingListOf(target), parent=target&&target.parent||null;
   const canSib = !!(list && target && !draggableNodes(movers).some(m=> parent && (m===parent || isDescendant(parent, m))));
@@ -2854,14 +2836,10 @@ function runDragRuleSelfTest(){
     const okManualBefore=insertHrNearNodeData(a2,'before') && rootA.children[rootA.children.indexOf(a2)-1].kind==='hr' && rootA.children[rootA.children.indexOf(a2)-1].parent===rootA;
     const okManualAfter=insertHrNearNodeData(a2,'after') && rootA.children[rootA.children.indexOf(a2)+1].kind==='hr' && rootA.children[rootA.children.indexOf(a2)+1].parent===rootA;
     const okManualCount=rootA.children.filter(n=>n.kind==='hr').length===beforeCount+2;
-    const childCount=a2.children.length;
-    const okManualChildFirst=insertHrIntoChildrenData(a2,'first') && a2.children[0].kind==='hr' && a2.children[0].parent===a2;
-    const okManualChildLast=insertHrIntoChildrenData(a2,'last') && a2.children[a2.children.length-1].kind==='hr' && a2.children[a2.children.length-1].parent===a2;
-    const okManualChildCount=a2.children.length===childCount+2;
     const badHr=makeHrNode(); badHr.children=[makeNode('bad child')]; setParents(badHr, rootA);
     const okHrChildrenCleared=badHr.children.length===0;
     const okNoHrParent=!isBranchNode(hrChild);
-    return {ok:!!(okRootBefore && okInto && okAfter && okHrDropZone && okManualBefore && okManualAfter && okManualCount && okManualChildFirst && okManualChildLast && okManualChildCount && okHrChildrenCleared && okNoHrParent), okRootBefore, okInto, okAfter, okHrDropZone, okManualBefore, okManualAfter, okManualCount, okManualChildFirst, okManualChildLast, okManualChildCount, okHrChildrenCleared, okNoHrParent};
+    return {ok:!!(okRootBefore && okInto && okAfter && okHrDropZone && okManualBefore && okManualAfter && okManualCount && okHrChildrenCleared && okNoHrParent), okRootBefore, okInto, okAfter, okHrDropZone, okManualBefore, okManualAfter, okManualCount, okHrChildrenCleared, okNoHrParent};
   }catch(e){
     return {ok:false, error:String(e&&e.message||e)};
   }finally{
@@ -3605,8 +3583,6 @@ viewport.addEventListener('contextmenu', e=>{
       {label:'＋ 父節點', key:'⇧Tab', fn:addParent},
       {label:'─ 插入分隔線在上方', fn:()=>insertHrNearNode(node,'before')},
       {label:'─ 插入分隔線在下方', fn:()=>insertHrNearNode(node,'after')},
-      {label:'─ 插入到子節點最前', fn:()=>insertHrIntoChildren(node,'first'), disabled:node.kind==='hr'},
-      {label:'─ 插入到子節點最後', fn:()=>insertHrIntoChildren(node,'last'), disabled:node.kind==='hr'},
       '—',
       {label:'✏️ 編輯文字', key:'F2', fn:editSelected, disabled:multi},
       {label: node.note==null ? '💬 增加註解' : '💬 編輯註解', fn:()=>editNodeNote(node), disabled:multi},
@@ -3921,10 +3897,15 @@ function runInteractionSelfTest(options={}){
     add('測試節點已渲染到畫布', !!canvas.querySelector(`.node[data-id="${first.id}"]`), first.id);
     const before=insertHrNearNodeData(second, 'before');
     add('右鍵分隔線插入前方邏輯可用', before && roots[0].children[roots[0].children.indexOf(second)-1].kind==='hr', 'before second');
-    const child=insertHrIntoChildrenData(first, 'last');
-    add('右鍵分隔線插入子清單尾端可用', child && first.children[first.children.length-1].kind==='hr', 'child last');
     const dragRule=runDragRuleSelfTest();
     add('拖曳分隔線規則自檢通過', dragRule.ok, JSON.stringify(dragRule));
+    const nodeDom=canvas.querySelector(`.node[data-id="${first.id}"]`);
+    if(nodeDom){
+      nodeDom.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:120}));
+      const menuText=ctxEl.textContent||'';
+      add('右鍵選單已移除子節點最前/最後分隔線項目', !/插入到子節點最前|插入到子節點最後/.test(menuText), menuText);
+      hideCtx();
+    } else add('右鍵選單已移除子節點最前/最後分隔線項目', false, 'missing node dom');
     render();
     const cv=renderMapToCanvas({skipRender:true});
     add('匯出畫布可產生內容', !!(cv && cv.width>0 && cv.height>0), cv?`${cv.width}x${cv.height}`:'no canvas');
