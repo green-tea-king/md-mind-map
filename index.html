@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.02
+  版次 Version : 10.03
   最後更新 Updated: 2026-07-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-02  v10.03 新增匯出視覺一致性自檢:檢查 Canvas 尺寸、分隔線像素、表格像素、PDF 結構與匯出支援清單。
      2026-07-02  v10.02 新增大型 Markdown 效能保護:依文字量自動放慢原始碼即時同步、顯示大型檔案提示,並把工作量納入診斷與自檢。
      2026-07-02  v10.01 新增草稿自動復原、互動流程自檢與一鍵部署腳本;啟動時可復原未匯出草稿,右鍵可跑完整自檢。
      2026-07-01  v10.00 調整縮放下限:大型心智圖可縮到低於 20% 以完整放進畫面,一般圖仍保留 20% 的操作手感,最低安全值為 3%。
@@ -583,7 +584,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.02';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.03';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -762,6 +763,10 @@ function collectDiagnostics(){
     templateSelfTestPassed:document.documentElement.dataset.templateSelfTestPassed||'',
     markdownRuleSelfTest:document.documentElement.dataset.markdownRuleSelfTest||'',
     markdownRuleSelfTestPassed:document.documentElement.dataset.markdownRuleSelfTestPassed||'',
+    exportSelfTest:document.documentElement.dataset.exportSelfTest||'',
+    exportSelfTestPassed:document.documentElement.dataset.exportSelfTestPassed||'',
+    exportSelfTestFailed:document.documentElement.dataset.exportSelfTestFailed||'',
+    exportSelfTestDetail:document.documentElement.dataset.exportSelfTestDetail||'',
     interactionSelfTest:document.documentElement.dataset.interactionSelfTest||'',
     interactionSelfTestPassed:document.documentElement.dataset.interactionSelfTestPassed||'',
     interactionSelfTestFailed:document.documentElement.dataset.interactionSelfTestFailed||'',
@@ -2329,6 +2334,95 @@ function _buildPdf(jpeg, pw, ph, pageW, pageH, dx, dy, dw, dh){
   put(xref); put('trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xo+'\n%%EOF');
   const outb=new Uint8Array(len); let pp=0; for(const c of chunks){ outb.set(c,pp); pp+=c.length; } return outb;
 }
+function _canvasPixelActivity(cv, rect, bg){
+  if(!cv || !rect) return {active:0,total:0,ratio:0};
+  const ctx=cv.getContext('2d'); if(!ctx) return {active:0,total:0,ratio:0};
+  const sf=cv._mmScaleFactor||1;
+  const x0=Math.max(0,Math.floor(rect.x*sf)), y0=Math.max(0,Math.floor(rect.y*sf));
+  const x1=Math.min(cv.width,Math.ceil((rect.x+rect.w)*sf)), y1=Math.min(cv.height,Math.ceil((rect.y+rect.h)*sf));
+  if(x1<=x0 || y1<=y0) return {active:0,total:0,ratio:0};
+  const data=ctx.getImageData(x0,y0,x1-x0,y1-y0).data;
+  const b=bg||[255,255,255]; let active=0, total=data.length/4;
+  for(let i=0;i<data.length;i+=4){
+    const d=Math.abs(data[i]-b[0])+Math.abs(data[i+1]-b[1])+Math.abs(data[i+2]-b[2]);
+    if(data[i+3]>10 && d>36) active++;
+  }
+  return {active,total,ratio:total?active/total:0};
+}
+function _canvasBackgroundRgb(cv){
+  const ctx=cv&&cv.getContext&&cv.getContext('2d'); if(!ctx) return [255,255,255];
+  const p=ctx.getImageData(1,1,1,1).data; return [p[0],p[1],p[2]];
+}
+function runExportSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  try{
+    autoDraftEnabled=false;
+    roots=parseMarkdown(`# 匯出自檢
+- **粗體**、*斜體*、~~刪除~~、[連結](https://example.com)
+---
+| 項目 | 數量 | 狀態 |
+| --- | ---: | :---: |
+| 分隔線 | 1 | OK |
+| 表格 | 2 | OK |
+\`\`\`text
+code block
+\`\`\`
+> [!WARNING]
+> 匯出警示框測試
+`);
+    roots.forEach(r=>setParents(r,null));
+    selected=roots[0]; selection=new Set([selected]);
+    render();
+    const audit=auditExportSupport();
+    add('匯出支援清單沒有遺漏目前節點類型', audit.unsupported.length===0, audit.unsupported.join(',')||'ok');
+    add('測試圖含分隔線與表格 DOM', !!canvas.querySelector('.node.hrnode') && !!canvas.querySelector('table.mdtable'), 'hr/table');
+    const cv=renderMapToCanvas({skipRender:true});
+    add('Canvas 匯出尺寸合理', !!(cv && cv.width>80 && cv.height>80 && cv._mmScaleFactor>0), cv?`${cv.width}x${cv.height}@${cv._mmScaleFactor}`:'no canvas');
+    const bg=_canvasBackgroundRgb(cv);
+    const hrEl=canvas.querySelector('.node.hrnode');
+    const hrRect=hrEl ? {x:hrEl.offsetLeft, y:hrEl.offsetTop+hrEl.offsetHeight/2-3, w:hrEl.offsetWidth, h:6} : null;
+    const hrPix=_canvasPixelActivity(cv, hrRect, bg);
+    add('Canvas 內有畫出水平分隔線虛線', hrPix.active>=8 && hrPix.ratio>0.01, `${hrPix.active}/${hrPix.total}`);
+    const tblEl=canvas.querySelector('table.mdtable');
+    const tblNode=tblEl && tblEl.closest('.node');
+    let tblRect=null;
+    if(tblEl && tblNode){
+      const tr=tblEl.getBoundingClientRect(), nr=tblNode.getBoundingClientRect(), sc=scale||1;
+      tblRect={x:tblNode.offsetLeft+(tr.left-nr.left)/sc, y:tblNode.offsetTop+(tr.top-nr.top)/sc, w:tr.width/sc, h:tr.height/sc};
+    }
+    const tblPix=_canvasPixelActivity(cv, tblRect, bg);
+    add('Canvas 內有畫出表格格線與文字', tblPix.active>=30 && tblPix.ratio>0.02, `${tblPix.active}/${tblPix.total}`);
+    const jpg=cv.toDataURL('image/jpeg',0.6);
+    add('JPG data URL 可產生', /^data:image\/jpeg;base64,/.test(jpg) && jpg.length>200, String(jpg.length));
+    const bytes=new Uint8Array([255,216,255,217]);
+    const pdf=_buildPdf(bytes, 1, 1, 595.28, 841.89, 24, 24, 100, 100);
+    const pdfHead=new TextDecoder().decode(pdf.slice(0,80));
+    const pdfText=new TextDecoder().decode(pdf.slice(0,Math.min(pdf.length,900)));
+    add('PDF 結構可產生且內含影像物件', pdfHead.startsWith('%PDF-1.4') && /\/Subtype \/Image/.test(pdfText) && /%%EOF/.test(new TextDecoder().decode(pdf.slice(-40))), String(pdf.length));
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `匯出自檢通過:${result.passed}/${checks.length}` : `匯出自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'export self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'匯出自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('匯出自檢執行失敗');
+    return result;
+  }finally{
+    autoDraftEnabled=savedDraftEnabled;
+    roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after export self test'); }
+  }
+}
+window.runMindMapExportSelfTest=runExportSelfTest;
 
 //===================== 選取 / 編輯 / 結構操作 =====================
 function flushPendingMdText(){ if(mdInputTimer) commitMdText(); }
@@ -3393,6 +3487,7 @@ function runCommandSearch(){
     ['淺色',()=>applyDark(false)],
     ['範本自檢',()=>runTemplateSelfTest({toast:true,log:true})],
     ['Markdown 規則自檢',()=>runMarkdownRuleSelfTest({toast:true,log:true})],
+    ['匯出自檢',()=>runExportSelfTest({toast:true,log:true})],
     ['完整自檢',()=>runMindMapFullSelfTest({toast:true,log:true})],
     ['複製診斷資訊',copyDiagnostics],
     ['節點寬度 40',()=>applyNodeWrapWidth('narrow',true)],
@@ -3434,6 +3529,7 @@ viewport.addEventListener('contextmenu', e=>{
     {label: debugLayout?'🧪 關閉版面除錯':'🧪 版面除錯', fn:toggleDebugLayout},
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
+    {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
     {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
@@ -3794,6 +3890,7 @@ function runMindMapFullSelfTest(options={}){
   const groups=[
     {name:'範本', result:runTemplateSelfTest({toast:false, log:options.log})},
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
+    {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
   const checks=[];
@@ -3991,6 +4088,11 @@ const markdownRuleSelfTestResult=runMarkdownRuleSelfTest({toast:false});
 document.documentElement.dataset.markdownRuleSelfTest=markdownRuleSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.markdownRuleSelfTestPassed=String(markdownRuleSelfTestResult.passed);
 document.documentElement.dataset.markdownRuleSelfTestFailed=String(markdownRuleSelfTestResult.failed);
+const exportSelfTestResult=runExportSelfTest({toast:false});
+document.documentElement.dataset.exportSelfTest=exportSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.exportSelfTestPassed=String(exportSelfTestResult.passed);
+document.documentElement.dataset.exportSelfTestFailed=String(exportSelfTestResult.failed);
+document.documentElement.dataset.exportSelfTestDetail=exportSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 const interactionSelfTestResult=runInteractionSelfTest({toast:false});
 document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
