@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.03
+  版次 Version : 10.04
   最後更新 Updated: 2026-07-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-02  v10.04 新增手機操作入口:小螢幕顯示「操作」按鈕,可直接開啟檔案、匯出、置中、搜尋、原始碼、自檢與深色模式。
      2026-07-02  v10.03 新增匯出視覺一致性自檢:檢查 Canvas 尺寸、分隔線像素、表格像素、PDF 結構與匯出支援清單。
      2026-07-02  v10.02 新增大型 Markdown 效能保護:依文字量自動放慢原始碼即時同步、顯示大型檔案提示,並把工作量納入診斷與自檢。
      2026-07-02  v10.01 新增草稿自動復原、互動流程自檢與一鍵部署腳本;啟動時可復原未匯出草稿,右鍵可跑完整自檢。
@@ -422,11 +423,17 @@
     font-size:12px; font-weight:700; letter-spacing:2px; box-shadow:-2px 2px 10px rgba(20,40,80,.18); }
   #mdTab:hover{ filter:brightness(1.07); }
   html.md-open #mdTab{ display:none; }
+  #mobileMenuBtn{ position:fixed; left:12px; bottom:14px; z-index:148; display:none; align-items:center; gap:6px;
+    border:none; border-radius:10px; padding:10px 13px; background:var(--accent); color:#fff; cursor:pointer;
+    font-size:13px; font-weight:800; box-shadow:0 6px 18px rgba(20,40,80,.22); }
+  #mobileMenuBtn:hover{ filter:brightness(1.06); }
   @media (max-width:720px){
     :root{ --mdw:min(86vw,420px); }
     html.md-open #app{ margin-right:0; }
     #mdPanel{ width:min(var(--mdw),86vw); }
     #mdTab{ top:auto; bottom:70px; transform:none; }
+    #mobileMenuBtn{ display:flex; }
+    html.md-open #mobileMenuBtn{ display:none; }
     .hint{ display:none; }
     .floatwin:not(#fwBrand){ display:none !important; }
   }
@@ -564,6 +571,7 @@
 <span class="hint">🖱 右鍵叫出選單(全部功能在這)· 雙擊編輯 · 拖節點換掛載/順序 · 滾輪縮放 · 拖背景平移 · Shift+滾輪水平捲動</span>
 <input type="file" id="file" accept=".md,.markdown,.txt,text/markdown,text/plain" style="display:none">
 <button id="mdTab" title="開啟原始 Markdown 面板(雙向同步)">📝 原始碼</button>
+<button id="mobileMenuBtn" title="開啟主要操作選單">☰ 操作</button>
 <div id="mdPanel">
   <div id="mdResize"></div>
   <div id="mdHead">📝 原始 Markdown<span class="mdsp"></span><button id="mdClose" title="關閉面板">✕</button></div>
@@ -584,7 +592,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.03';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.04';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-02'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -767,6 +775,9 @@ function collectDiagnostics(){
     exportSelfTestPassed:document.documentElement.dataset.exportSelfTestPassed||'',
     exportSelfTestFailed:document.documentElement.dataset.exportSelfTestFailed||'',
     exportSelfTestDetail:document.documentElement.dataset.exportSelfTestDetail||'',
+    mobileEntrySelfTest:document.documentElement.dataset.mobileEntrySelfTest||'',
+    mobileEntrySelfTestPassed:document.documentElement.dataset.mobileEntrySelfTestPassed||'',
+    mobileEntrySelfTestFailed:document.documentElement.dataset.mobileEntrySelfTestFailed||'',
     interactionSelfTest:document.documentElement.dataset.interactionSelfTest||'',
     interactionSelfTestPassed:document.documentElement.dataset.interactionSelfTestPassed||'',
     interactionSelfTestFailed:document.documentElement.dataset.interactionSelfTestFailed||'',
@@ -2424,6 +2435,35 @@ code block
 }
 window.runMindMapExportSelfTest=runExportSelfTest;
 
+function runMobileEntrySelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
+  try{
+    const btn=document.getElementById('mobileMenuBtn');
+    add('手機操作按鈕存在', !!btn, btn?btn.textContent.trim():'missing');
+    const menu=buildMainMenuItems();
+    add('手機入口共用檔案與檢視選單', !!(menu.fileSub&&menu.fileSub.length>=5&&menu.viewSub&&menu.viewSub.length>=8), `${menu.fileSub&&menu.fileSub.length}/${menu.viewSub&&menu.viewSub.length}`);
+    const viewLabels=(menu.viewSub||[]).map(x=>x.label||'').join('|');
+    add('手機入口包含原始碼與完整自檢', /原始 Markdown/.test(viewLabels) && /完整自檢/.test(viewLabels), viewLabels);
+    if(btn){
+      hideCtx();
+      btn.click();
+      add('手機操作按鈕可開啟選單', ctxEl.style.display==='block' && /檔案|檢視/.test(ctxEl.textContent||''), (ctxEl.textContent||'').slice(0,80));
+      hideCtx();
+    }
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `手機入口自檢通過:${result.passed}/${checks.length}` : `手機入口自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'mobile entry self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'手機入口自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('手機入口自檢執行失敗');
+    return result;
+  }
+}
+window.runMindMapMobileEntrySelfTest=runMobileEntrySelfTest;
+
 //===================== 選取 / 編輯 / 結構操作 =====================
 function flushPendingMdText(){ if(mdInputTimer) commitMdText(); }
 function snapshot(skipMdFlush){ if(!skipMdFlush) flushPendingMdText();
@@ -3488,6 +3528,7 @@ function runCommandSearch(){
     ['範本自檢',()=>runTemplateSelfTest({toast:true,log:true})],
     ['Markdown 規則自檢',()=>runMarkdownRuleSelfTest({toast:true,log:true})],
     ['匯出自檢',()=>runExportSelfTest({toast:true,log:true})],
+    ['手機入口自檢',()=>runMobileEntrySelfTest({toast:true,log:true})],
     ['完整自檢',()=>runMindMapFullSelfTest({toast:true,log:true})],
     ['複製診斷資訊',copyDiagnostics],
     ['節點寬度 40',()=>applyNodeWrapWidth('narrow',true)],
@@ -3501,10 +3542,7 @@ function runCommandSearch(){
   if(hit){ hit[1](); showToast('已執行: '+hit[0]); }
   else showToast('找不到命令');
 }
-viewport.addEventListener('contextmenu', e=>{
-  e.preventDefault();
-  const nodeDom = roots.length ? e.target.closest('.node') : null;
-  const hasClip = !!(clipboard && clipboard.length);
+function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
   const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
   const fileSub = [
@@ -3530,10 +3568,19 @@ viewport.addEventListener('contextmenu', e=>{
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
+    {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
     {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
   ];
+  return {fileSub, viewSub};
+}
+viewport.addEventListener('contextmenu', e=>{
+  e.preventDefault();
+  const nodeDom = roots.length ? e.target.closest('.node') : null;
+  const hasClip = !!(clipboard && clipboard.length);
+  const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
+  const {fileSub, viewSub}=buildMainMenuItems();
   let items;
   if(nodeDom){
     const node=findByIdAll(nodeDom.dataset.id);
@@ -3592,6 +3639,26 @@ viewport.addEventListener('contextmenu', e=>{
   }
   showCtx(e.clientX, e.clientY, items);
 });
+const mobileMenuBtn=document.getElementById('mobileMenuBtn');
+if(mobileMenuBtn){
+  mobileMenuBtn.onclick=e=>{
+    e.preventDefault(); e.stopPropagation();
+    const hasClip = !!(clipboard && clipboard.length);
+    const {fileSub, viewSub}=buildMainMenuItems();
+    const items=[
+      {label:'✨ 新增中心主題', fn:addRoot},
+      {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
+      '—',
+      {label:'📄 檔案', sub:fileSub},
+      {label:'👁 檢視', sub:viewSub},
+      '—',
+      {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
+      {label:'▶ 全部收合', fn:()=>setAllCollapsed(true)},
+    ];
+    const r=mobileMenuBtn.getBoundingClientRect();
+    showCtx(r.left, Math.max(6, r.top-8), items);
+  };
+}
 window.addEventListener('mousedown', e=>{ if(!ctxEl.contains(e.target) && !ctxSubs.some(s=>s.contains(e.target))) hideCtx(); });
 window.addEventListener('keydown', e=>{ if(e.key==='Escape') hideCtx(); });
 window.addEventListener('blur', hideCtx);
@@ -3891,6 +3958,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'範本', result:runTemplateSelfTest({toast:false, log:options.log})},
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
     {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
+    {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
   const checks=[];
@@ -4093,6 +4161,10 @@ document.documentElement.dataset.exportSelfTest=exportSelfTestResult.ok?'pass':'
 document.documentElement.dataset.exportSelfTestPassed=String(exportSelfTestResult.passed);
 document.documentElement.dataset.exportSelfTestFailed=String(exportSelfTestResult.failed);
 document.documentElement.dataset.exportSelfTestDetail=exportSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+const mobileEntrySelfTestResult=runMobileEntrySelfTest({toast:false});
+document.documentElement.dataset.mobileEntrySelfTest=mobileEntrySelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.mobileEntrySelfTestPassed=String(mobileEntrySelfTestResult.passed);
+document.documentElement.dataset.mobileEntrySelfTestFailed=String(mobileEntrySelfTestResult.failed);
 const interactionSelfTestResult=runInteractionSelfTest({toast:false});
 document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
