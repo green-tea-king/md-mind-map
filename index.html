@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.23
+  版次 Version : 10.24
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.24 優化自檢報告面板可讀性:成功項目預設折疊、失敗項目自動展開,新增全部展開/收合並改善手機版底部抽屜顯示。
      2026-07-03  v10.23 新增自檢報告面板:完整自檢後可在畫面查看各組通過狀態、失敗項目與原因,不必查看 console 或 dataset。
      2026-07-03  v10.22 新增 HTML 單檔匯出回歸自檢:獨立驗證匯出 HTML 可解析、保留內建範本、內嵌目前內容,並可重新解析分隔線與表格。
      2026-07-03  v10.21 修正 HTML 單檔匯出自檢:保留內建 DEFAULT_MARKDOWN 供範本自檢使用,另以 EXPORTED_MARKDOWN 載入匯出的目前內容。
@@ -423,20 +424,26 @@
     display:none;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;
     box-shadow:0 18px 50px rgba(20,40,80,.24);z-index:10040;overflow:hidden;color:var(--txt);}
   .report-panel.show{display:flex;}
-  .report-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);
+  .report-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);
     background:#eef2f7;font-size:13px;font-weight:800;}
   .report-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .report-summary{font-size:12px;font-weight:800;padding:3px 8px;border-radius:999px;background:#dcfce7;color:#15803d;}
   .report-summary.fail{background:#fee2e2;color:#b91c1c;}
+  .report-action{border:1px solid var(--line);background:rgba(255,255,255,.72);color:#64748b;cursor:pointer;border-radius:7px;
+    height:28px;padding:0 8px;font-size:12px;font-weight:800;}
+  .report-action:hover{background:var(--accent2);color:var(--txt);}
   .report-close{border:none;background:transparent;color:#64748b;cursor:pointer;border-radius:6px;width:28px;height:28px;font-size:18px;line-height:1;}
   .report-close:hover{background:var(--accent2);}
   .report-body{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px;font-size:12px;}
   .report-group{border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.62);overflow:hidden;}
-  .report-group-head{display:flex;align-items:center;gap:8px;padding:8px 10px;font-weight:800;}
+  .report-group-head{display:flex;align-items:center;gap:8px;padding:8px 10px;font-weight:800;cursor:pointer;}
+  .report-group-head:hover{background:rgba(47,111,237,.06);}
+  .report-caret{width:16px;color:#94a3b8;font-size:11px;}
   .report-group-head .badge{font-size:11px;border-radius:999px;padding:2px 7px;background:#dcfce7;color:#15803d;}
   .report-group.fail .report-group-head .badge{background:#fee2e2;color:#b91c1c;}
   .report-group-head small{margin-left:auto;color:#7b8794;font-weight:700;}
   .report-checks{border-top:1px solid var(--line);padding:7px 10px;display:flex;flex-direction:column;gap:5px;}
+  .report-group.collapsed .report-checks{display:none;}
   .report-check{display:grid;grid-template-columns:auto 1fr;gap:4px 7px;color:#64748b;line-height:1.35;}
   .report-check b{color:#475569;}
   .report-check.fail b{color:#b91c1c;}
@@ -457,6 +464,7 @@
   html.dark .ctxmenu{ background:var(--panel); }
   html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark .report-head{ background:#2b313b; color:#cbd5e1; }
+  html.dark .report-action{ background:rgba(35,40,48,.72); color:#aeb6c2; }
   html.dark .report-group{ background:rgba(35,40,48,.72); }
   html.dark #status{ background:rgba(20,23,28,.85); color:#aeb6c2; }
   html.dark #status .status-main{ color:#cbd5e1; }
@@ -514,6 +522,10 @@
     html.md-open #mobileMenuBtn{ display:none; }
     .hint{ display:none; }
     .floatwin:not(#fwBrand){ display:none !important; }
+    .report-panel{left:8px;right:8px;bottom:8px;width:auto;max-height:78vh;border-radius:12px;}
+    .report-head{flex-wrap:wrap;}
+    .report-title{flex:1 0 100%;}
+    .report-body{max-height:62vh;}
   }
   html.dark #mdHead{ background:#2b313b; color:#aeb6c2; }
   html.dark #mdHead button{ color:#aeb6c2; }
@@ -592,6 +604,8 @@
   <div class="report-head">
     <div class="report-title">自檢報告</div>
     <div id="selfTestSummary" class="report-summary">尚未執行</div>
+    <button id="selfTestExpand" class="report-action" title="展開全部">展開</button>
+    <button id="selfTestCollapse" class="report-action" title="收合全部">收合</button>
     <button id="selfTestClose" class="report-close" title="關閉">×</button>
   </div>
   <div id="selfTestBody" class="report-body"></div>
@@ -685,8 +699,8 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.23';        // 版次:小改 +0.1,大改 +1.0
-const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
+const APP_VERSION = '10.24';        // 版次:小改 +0.1,大改 +1.0
+const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const PREF_VERSION='9.82';
@@ -4482,7 +4496,17 @@ const selfTestReportEl=document.getElementById('selfTestReport');
 const selfTestSummaryEl=document.getElementById('selfTestSummary');
 const selfTestBodyEl=document.getElementById('selfTestBody');
 const selfTestCloseEl=document.getElementById('selfTestClose');
+const selfTestExpandEl=document.getElementById('selfTestExpand');
+const selfTestCollapseEl=document.getElementById('selfTestCollapse');
 let lastSelfTestReport=null;
+function setReportGroupsCollapsed(collapsed){
+  if(!selfTestBodyEl) return;
+  selfTestBodyEl.querySelectorAll('.report-group').forEach(g=>{
+    g.classList.toggle('collapsed', collapsed);
+    const caret=g.querySelector('.report-caret');
+    if(caret) caret.textContent=collapsed?'▶':'▼';
+  });
+}
 function showSelfTestReport(result){
   lastSelfTestReport=result;
   if(!selfTestReportEl || !selfTestSummaryEl || !selfTestBodyEl || !result) return result;
@@ -4494,9 +4518,12 @@ function showSelfTestReport(result){
   for(const g of groups){
     const group=document.createElement('section');
     const ok=!!(g.result&&g.result.ok);
-    group.className='report-group'+(ok?'':' fail');
+    group.className='report-group'+(ok?' collapsed':' fail');
     const head=document.createElement('div');
     head.className='report-group-head';
+    const caret=document.createElement('span');
+    caret.className='report-caret';
+    caret.textContent=ok?'▶':'▼';
     const badge=document.createElement('span');
     badge.className='badge';
     badge.textContent=ok?'PASS':'FAIL';
@@ -4505,7 +4532,11 @@ function showSelfTestReport(result){
     const meta=document.createElement('small');
     const groupChecks=(g.result&&g.result.checks)||[];
     meta.textContent=`${g.result&&g.result.passed||0}/${groupChecks.length}`;
-    head.append(badge,name,meta);
+    head.append(caret,badge,name,meta);
+    head.addEventListener('click', ()=>{
+      group.classList.toggle('collapsed');
+      caret.textContent=group.classList.contains('collapsed')?'▶':'▼';
+    });
     group.append(head);
     const failedChecks=groupChecks.filter(c=>!c.ok);
     const showChecks=failedChecks.length ? failedChecks : groupChecks.slice(0,3);
@@ -4541,6 +4572,8 @@ function openSelfTestReport(){
 }
 function closeSelfTestReport(){ if(selfTestReportEl) selfTestReportEl.classList.remove('show'); }
 selfTestCloseEl&&selfTestCloseEl.addEventListener('click', closeSelfTestReport);
+selfTestExpandEl&&selfTestExpandEl.addEventListener('click', ()=>setReportGroupsCollapsed(false));
+selfTestCollapseEl&&selfTestCollapseEl.addEventListener('click', ()=>setReportGroupsCollapsed(true));
 function runCommandPaletteSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   try{
@@ -4550,7 +4583,7 @@ function runCommandPaletteSelfTest(options={}){
     add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
-    add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl), '');
+    add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
     runCommandSearch();
     cmdInputEl.value='pdf'; renderCommandPalette();
     add('命令搜尋可過濾', cmdMatches.some(c=>c.label==='匯出 PDF'), cmdMatches.map(c=>c.label).join(','));
