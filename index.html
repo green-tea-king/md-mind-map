@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.14
+  版次 Version : 10.15
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.15 整理原始 Markdown 面板可讀性:加大行高與內距、強化目前行高亮,並補高亮對齊自檢。
      2026-07-03  v10.14 優化右鍵選單間距與分組密度:加寬選單、穩定列高、強化群組標題與分隔距離,提升功能掃讀性。
      2026-07-03  v10.13 整理畫面元素間距:底部狀態列、操作提示、縮放列與 Toast 分層排列,避免互相貼近或重疊。
      2026-07-03  v10.12 強化置中縮放:置中功能會把整張心智圖等比例塞進可視畫面中央,大圖不再只靠左上留邊。
@@ -437,13 +438,16 @@
     width:24px; height:24px; border-radius:6px; line-height:1; padding:0; }
   #mdHead button:hover{ background:#fff; }
   #mdWrap{ position:relative; flex:1; overflow:hidden; }
-  #mdHi{ position:absolute; left:0; right:0; top:0; height:20px; display:none; pointer-events:none; z-index:1;
-    background:rgba(47,111,237,.16); border-top:1px solid rgba(47,111,237,.38); border-bottom:1px solid rgba(47,111,237,.38); }
+  #mdHi{ position:absolute; left:0; right:0; top:0; height:22px; display:none; pointer-events:none; z-index:1;
+    background:rgba(47,111,237,.13); border-left:3px solid var(--accent);
+    border-top:1px solid rgba(47,111,237,.32); border-bottom:1px solid rgba(47,111,237,.32);
+    box-shadow:inset 0 0 0 999px rgba(47,111,237,.035); }
   #mdText{ position:absolute; inset:0; width:100%; height:100%; resize:none; border:none; outline:none; z-index:2;
-    background:transparent; color:var(--txt); font:13px/20px ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;
-    padding:10px 12px; white-space:pre; overflow:auto; tab-size:2; }
-  #mdInfo{ padding:6px 12px; font-size:11px; color:#9aa5b1; border-top:1px solid var(--line);
-    user-select:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    background:transparent; color:var(--txt); font:13px/22px ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;
+    padding:12px 14px; white-space:pre; overflow:auto; tab-size:2; }
+  #mdInfo{ padding:7px 12px; font-size:11px; line-height:1.35; color:#8f9aa8; border-top:1px solid var(--line);
+    user-select:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+  #mdInfo span{ white-space:nowrap; }
   #mdTab{ position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:149; background:var(--accent);
     color:#fff; border:none; cursor:pointer; writing-mode:vertical-rl; padding:14px 6px; border-radius:9px 0 0 9px;
     font-size:12px; font-weight:700; letter-spacing:2px; box-shadow:-2px 2px 10px rgba(20,40,80,.18); }
@@ -466,7 +470,7 @@
   html.dark #mdHead{ background:#2b313b; color:#aeb6c2; }
   html.dark #mdHead button{ color:#aeb6c2; }
   html.dark #mdHead button:hover{ background:rgba(255,255,255,.12); }
-  html.dark #mdHi{ background:rgba(110,160,255,.18); border-color:rgba(110,160,255,.42); }
+  html.dark #mdHi{ background:rgba(110,160,255,.16); border-color:rgba(110,160,255,.38); border-left-color:#6ea0ff; }
   /* ===== Markdown 表格(節點內以真正的表格呈現)===== */
   .node.tablenode{ max-width:920px; }
   .node .ntext.hastable{ display:block; white-space:normal; }
@@ -607,7 +611,7 @@
   <div id="mdResize"></div>
   <div id="mdHead">📝 原始 Markdown<span class="mdsp"></span><button id="mdClose" title="關閉面板">✕</button></div>
   <div id="mdWrap"><div id="mdHi"></div><textarea id="mdText" spellcheck="false" autocomplete="off" wrap="off"></textarea></div>
-  <div id="mdInfo">雙向同步 · 點節點或文字列會互相對應;直接編輯文字即時更新心智圖</div>
+  <div id="mdInfo"><span>雙向同步</span><span>點節點或文字列會互相對應</span><span>直接編輯文字即時更新</span></div>
 </div>
 <script>
 "use strict";
@@ -623,7 +627,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.14';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.15';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1903,7 +1907,7 @@ function clampZoom(value){
   return Math.min(MAX_ZOOM_SCALE, Math.max(minZoomScale(), value));
 }
 //===================== 右側原始 Markdown 面板(雙向同步) =====================
-const MD_LH=20, MD_PAD=10;
+const MD_LH=22, MD_PAD=12;
 const mdTextEl=document.getElementById('mdText');
 const mdHiEl=document.getElementById('mdHi');
 const mdInfoEl=document.getElementById('mdInfo');
@@ -4121,6 +4125,18 @@ function runInteractionSelfTest(options={}){
     add('右鍵分隔線插入前方邏輯可用', before && roots[0].children[roots[0].children.indexOf(second)-1].kind==='hr', 'before second');
     const dragRule=runDragRuleSelfTest();
     add('拖曳分隔線規則自檢通過', dragRule.ok, JSON.stringify(dragRule));
+    const oldMdValue=mdTextEl.value, oldMdScroll=mdTextEl.scrollTop, oldMdActiveBlock=mdActiveBlock;
+    const oldHiDisplay=mdHiEl.style.display, oldHiTop=mdHiEl.style.top, oldHiHeight=mdHiEl.style.height;
+    mdTextEl.value='# A\n- B\n- C\n';
+    mdTextEl.scrollTop=0;
+    setActiveMdLine(1);
+    const mdStyle=getComputedStyle(mdTextEl);
+    const mdLineHeight=parseFloat(mdStyle.lineHeight), mdPaddingTop=parseFloat(mdStyle.paddingTop);
+    const hiTop=parseFloat(mdHiEl.style.top), hiHeight=parseFloat(mdHiEl.style.height);
+    add('原始 Markdown 面板行高與高亮對齊', Math.abs(mdLineHeight-MD_LH)<0.5 && Math.abs(mdPaddingTop-MD_PAD)<0.5 && Math.abs(hiTop-(MD_PAD+MD_LH))<0.5 && Math.abs(hiHeight-MD_LH)<0.5,
+      `lh=${mdLineHeight}, pad=${mdPaddingTop}, hi=${hiTop}/${hiHeight}`);
+    mdTextEl.value=oldMdValue; mdTextEl.scrollTop=oldMdScroll; mdActiveBlock=oldMdActiveBlock;
+    mdHiEl.style.display=oldHiDisplay; mdHiEl.style.top=oldHiTop; mdHiEl.style.height=oldHiHeight;
     const nodeDom=canvas.querySelector(`.node[data-id="${first.id}"]`);
     if(nodeDom){
       nodeDom.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:120}));
@@ -4356,6 +4372,7 @@ Setext H2 寫法
 ## 📝 原始 Markdown 面板(雙向同步)
 - 開關:點畫面右緣的「原始碼」分頁,或右鍵 → 檢視 → 原始 Markdown 面板
 - 點節點 → 面板會高亮對應的文字列並捲動到位
+- 高亮:目前節點對應行會以淡色橫條標示,行距較寬方便對照
 - 點文字列 → 心智圖會選取並置中對應節點
 - 即時編輯:在面板裡改 Markdown,心智圖會即時跟著更新
 - 調整:拖面板左緣可改寬度;開關與寬度都會自動記住
