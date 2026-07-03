@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.28
+  版次 Version : 10.29
   最後更新 Updated: 2026-07-04
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.29 優化搜尋體驗:新增搜尋結果清單、找不到提示、結果點擊跳轉,並加入搜尋自檢與完整自檢。
      2026-07-04  v10.28 修正自動草稿復原提示反覆出現:取消復原時同步清除草稿,並新增 clearDraft=1 啟動清除入口。
      2026-07-04  v10.27 強化右鍵選單無障礙:補 role/aria-haspopup/aria-expanded,改善子選單鍵盤狀態,新增右鍵選單無障礙自檢。
      2026-07-04  v10.26 強化鍵盤操作與無障礙:節點補 aria-label 與焦點、報告面板支援 Esc 關閉與焦點回復,新增鍵盤操作自檢。
@@ -334,6 +335,16 @@
   #searchBar{position:absolute;top:12px;right:14px;display:none;align-items:center;gap:6px;background:#fff;
     border:1px solid var(--line);border-radius:10px;padding:6px 8px;box-shadow:0 4px 16px rgba(0,0,0,.14);z-index:60;}
   #searchBar.show{display:flex;}
+  #searchWrap{position:absolute;top:56px;right:14px;width:320px;max-height:340px;display:none;z-index:60;background:#fff;
+    border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(20,40,80,.18);overflow:hidden;}
+  #searchWrap.show{display:block;}
+  #searchHint{padding:9px 11px;border-bottom:1px solid var(--line);font-size:12px;font-weight:700;color:#64748b;background:#f8fafc;}
+  #searchList{max-height:292px;overflow:auto;padding:5px;}
+  .searchItem{display:block;width:100%;border:none;background:transparent;text-align:left;color:var(--txt);cursor:pointer;
+    border-radius:7px;padding:8px 9px;font:600 12px/1.35 system-ui,sans-serif;}
+  .searchItem:hover,.searchItem.active{background:var(--accent2);}
+  .searchItem small{display:block;color:#7b8794;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .searchEmpty{padding:13px 11px;color:#b45309;font-size:12px;font-weight:700;text-align:center;}
   #marquee{position:absolute;border:1.5px solid var(--accent);background:rgba(47,111,237,.12);z-index:55;pointer-events:none;display:none;border-radius:3px;}
   #guide{position:absolute;left:0;top:0;display:none;z-index:57;pointer-events:none;overflow:visible;}
   #debugGuide{position:absolute;left:0;top:0;display:none;z-index:56;pointer-events:none;overflow:visible;}
@@ -465,6 +476,8 @@
   html.dark #searchBar{ background:var(--panel); }
   html.dark #searchInput{ color:var(--txt); background:transparent; }
   html.dark #searchBar button{ background:#2b313b; color:var(--txt); }
+  html.dark #searchWrap{ background:var(--panel); }
+  html.dark #searchHint{ background:#2b313b; color:#aeb6c2; }
   html.dark .ctxmenu{ background:var(--panel); }
   html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark .report-head{ background:#2b313b; color:#cbd5e1; }
@@ -593,6 +606,10 @@
       <button id="searchNext" title="下一個 (Enter)">↓</button>
       <button id="searchClose" title="關閉 (Esc)">✕</button>
     </div>
+    <div id="searchWrap" aria-label="搜尋結果">
+      <div id="searchHint">輸入文字搜尋節點</div>
+      <div id="searchList"></div>
+    </div>
     <div id="marquee"></div>
     <svg id="guide"></svg>
     <svg id="debugGuide"></svg>
@@ -703,7 +720,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.28';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.29';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -955,6 +972,10 @@ function collectDiagnostics(){
     contextMenuAccessibilitySelfTestPassed:document.documentElement.dataset.contextMenuAccessibilitySelfTestPassed||'',
     contextMenuAccessibilitySelfTestFailed:document.documentElement.dataset.contextMenuAccessibilitySelfTestFailed||'',
     contextMenuAccessibilitySelfTestDetail:document.documentElement.dataset.contextMenuAccessibilitySelfTestDetail||'',
+    searchExperienceSelfTest:document.documentElement.dataset.searchExperienceSelfTest||'',
+    searchExperienceSelfTestPassed:document.documentElement.dataset.searchExperienceSelfTestPassed||'',
+    searchExperienceSelfTestFailed:document.documentElement.dataset.searchExperienceSelfTestFailed||'',
+    searchExperienceSelfTestDetail:document.documentElement.dataset.searchExperienceSelfTestDetail||'',
     keyboardAccessibilitySelfTest:document.documentElement.dataset.keyboardAccessibilitySelfTest||'',
     keyboardAccessibilitySelfTestPassed:document.documentElement.dataset.keyboardAccessibilitySelfTestPassed||'',
     keyboardAccessibilitySelfTestFailed:document.documentElement.dataset.keyboardAccessibilitySelfTestFailed||'',
@@ -3849,8 +3870,11 @@ function colorizeTheme(start, t){
 const searchBar=document.getElementById('searchBar');
 const searchInput=document.getElementById('searchInput');
 const searchCount=document.getElementById('searchCount');
+const searchWrap=document.getElementById('searchWrap');
+const searchHint=document.getElementById('searchHint');
+const searchList=document.getElementById('searchList');
 let searchOpenedIds=new Set();
-function openSearch(){ searchBar.classList.add('show'); searchInput.focus(); searchInput.select(); if(searchInput.value) runSearch(searchInput.value, false); }
+function openSearch(){ searchBar.classList.add('show'); searchWrap.classList.add('show'); searchInput.focus(); searchInput.select(); if(searchInput.value) runSearch(searchInput.value, false); else updateSearchUI(); }
 function refreshSearchDom(){ canvas.querySelectorAll('.node').forEach(d=>{
   d.classList.toggle('match', searchMatchIds.has(d.dataset.id));
   d.classList.toggle('match-current', d.dataset.id===currentMatchId);
@@ -3859,9 +3883,36 @@ function restoreSearchOpened(){ let changed=false;
   for(const id of searchOpenedIds){ const n=findByIdAll(id); if(n && !n.collapsed){ n.collapsed=true; changed=true; } }
   searchOpenedIds.clear(); return changed;
 }
-function closeSearch(){ searchBar.classList.remove('show'); const changed=restoreSearchOpened(); clearSearch(); if(changed) scheduleRender(); else refreshSearchDom(); }
+function closeSearch(){ searchBar.classList.remove('show'); searchWrap.classList.remove('show'); const changed=restoreSearchOpened(); clearSearch(); if(changed) scheduleRender(); else refreshSearchDom(); }
 function clearSearch(){ searchMatches=[]; searchMatchIds=new Set(); searchIdx=-1; currentMatchId=null; updateSearchUI(); }
-function updateSearchUI(){ searchCount.textContent = searchMatches.length ? ((searchIdx+1)+'/'+searchMatches.length) : '0/0'; }
+function searchNodePath(n){ const parts=[]; let p=n; while(p){ if(p.title) parts.push(String(p.title).split('\n')[0]); p=p.parent; } return parts.reverse().join(' / '); }
+function updateSearchUI(){
+  const q=(searchInput.value||'').trim();
+  searchCount.textContent = searchMatches.length ? ((searchIdx+1)+'/'+searchMatches.length) : '0/0';
+  clearTrustedHTML(searchList);
+  if(!q){ searchHint.textContent='輸入文字搜尋節點'; return; }
+  if(!searchMatches.length){
+    searchHint.textContent='找不到符合的節點';
+    const empty=document.createElement('div'); empty.className='searchEmpty'; empty.textContent='沒有搜尋結果';
+    searchList.appendChild(empty); return;
+  }
+  searchHint.textContent=`找到 ${searchMatches.length} 個結果`;
+  searchMatches.slice(0,50).forEach((n,i)=>{
+    const b=document.createElement('button'); b.type='button'; b.className='searchItem'+(i===searchIdx?' active':'');
+    b.dataset.index=String(i);
+    const title=document.createElement('span'); title.textContent=(n.title||n.refdef&&n.refdef.raw||n.code||'空白節點').toString().replace(/\s+/g,' ').slice(0,70);
+    const path=document.createElement('small'); path.textContent=searchNodePath(n);
+    b.append(title,path);
+    b.onclick=()=>{ searchIdx=i; currentMatchId=n.id; updateSearchUI(); focusMatch(); };
+    searchList.appendChild(b);
+  });
+  if(searchMatches.length>50){
+    const more=document.createElement('div'); more.className='searchEmpty'; more.textContent=`另有 ${searchMatches.length-50} 筆,請輸入更精準關鍵字`;
+    searchList.appendChild(more);
+  }
+  const active=searchList.querySelector('.searchItem.active');
+  if(active) active.scrollIntoView({block:'nearest'});
+}
 function nodeSearchText(n){
   const parts=[n.title,n.note,n.fnid];
   if(n.code!=null) parts.push(n.code,n.lang);
@@ -4002,6 +4053,7 @@ function getCommandItems(){
     {label:'分隔線位置自檢', hint:'診斷', aliases:'test hr separator position', fn:()=>runHrPositionSelfTest({toast:true,log:true})},
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
     {label:'右鍵選單自檢', hint:'診斷', aliases:'test context menu accessibility aria keyboard', fn:()=>runContextMenuAccessibilitySelfTest({toast:true,log:true})},
+    {label:'搜尋體驗自檢', hint:'診斷', aliases:'test search results find', fn:()=>runSearchExperienceSelfTest({toast:true,log:true})},
     {label:'鍵盤操作自檢', hint:'診斷', aliases:'test keyboard accessibility focus escape aria', fn:()=>runKeyboardAccessibilitySelfTest({toast:true,log:true})},
     {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
     {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
@@ -4086,6 +4138,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行分隔線位置自檢', fn:()=>runHrPositionSelfTest({toast:true, log:true})},
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
     {label:'✅ 執行右鍵選單自檢', fn:()=>runContextMenuAccessibilitySelfTest({toast:true, log:true})},
+    {label:'✅ 執行搜尋體驗自檢', fn:()=>runSearchExperienceSelfTest({toast:true, log:true})},
     {label:'✅ 執行鍵盤操作自檢', fn:()=>runKeyboardAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
@@ -4607,6 +4660,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'分隔線位置', result:runHrPositionSelfTest({toast:false, log:options.log})},
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
     {name:'右鍵選單', result:runContextMenuAccessibilitySelfTest({toast:false, log:options.log})},
+    {name:'搜尋體驗', result:runSearchExperienceSelfTest({toast:false, log:options.log})},
     {name:'鍵盤操作', result:runKeyboardAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
@@ -4715,7 +4769,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -4795,6 +4849,57 @@ function runContextMenuAccessibilitySelfTest(options={}){
   }
 }
 window.runContextMenuAccessibilitySelfTest=runContextMenuAccessibilitySelfTest;
+function runSearchExperienceSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  const savedScale=scale, savedPanX=panX, savedPanY=panY;
+  const oldSearchValue=searchInput.value;
+  const searchWasOpen=searchBar.classList.contains('show') || searchWrap.classList.contains('show');
+  try{
+    roots=parseMarkdown('# 搜尋自檢中心\n- Alpha 主要節點\n  - Alpha 子節點\n- Beta 節點\n');
+    roots.forEach(r=>setParents(r,null));
+    selected=roots[0]; selection=new Set([selected]);
+    render();
+    searchInput.value='Alpha';
+    openSearch();
+    runSearch('Alpha', false);
+    add('搜尋列與結果清單會一起開啟', searchBar.classList.contains('show') && searchWrap.classList.contains('show'), `${searchBar.className}/${searchWrap.className}`);
+    add('搜尋可找到多個節點', searchMatches.length===2 && searchCount.textContent==='1/2', `${searchMatches.length}/${searchCount.textContent}`);
+    add('搜尋結果清單列出命中節點', searchList.querySelectorAll('.searchItem').length===2 && /找到 2 個結果/.test(searchHint.textContent||''), searchHint.textContent);
+    const second=searchList.querySelector('.searchItem[data-index="1"]');
+    second&&second.click();
+    add('點擊搜尋結果會選取並跳到該節點', !!(selected && selected.title==='Alpha 子節點' && currentMatchId===selected.id), selected&&selected.title);
+    searchInput.value='不存在的字';
+    runSearch(searchInput.value, false);
+    add('無結果時有清楚提示', searchMatches.length===0 && /找不到/.test(searchHint.textContent||'') && !!searchList.querySelector('.searchEmpty'), searchHint.textContent);
+    closeSearch();
+    add('關閉搜尋會收起搜尋列與結果清單', !searchBar.classList.contains('show') && !searchWrap.classList.contains('show'), `${searchBar.className}/${searchWrap.className}`);
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `搜尋體驗自檢通過:${result.passed}/${checks.length}` : `搜尋體驗自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'search experience self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'搜尋體驗自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('搜尋體驗自檢執行失敗');
+    return result;
+  }finally{
+    closeSearch();
+    searchInput.value=oldSearchValue;
+    if(searchWasOpen) searchBar.classList.add('show'); else searchBar.classList.remove('show');
+    if(searchWasOpen) searchWrap.classList.add('show'); else searchWrap.classList.remove('show');
+    roots=savedRoots;
+    scale=savedScale; panX=savedPanX; panY=savedPanY;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ if(searchInput.value) runSearch(searchInput.value, false); else clearSearch(); render(); applyTransform(); }catch(e){ logCaught(e,'restore after search experience self test'); }
+  }
+}
+window.runSearchExperienceSelfTest=runSearchExperienceSelfTest;
 function runKeyboardAccessibilitySelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
@@ -5006,7 +5111,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、右鍵選單、鍵盤操作與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、右鍵選單、搜尋體驗、鍵盤操作與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
@@ -5072,6 +5177,11 @@ document.documentElement.dataset.contextMenuAccessibilitySelfTest=contextMenuAcc
 document.documentElement.dataset.contextMenuAccessibilitySelfTestPassed=String(contextMenuAccessibilitySelfTestResult.passed);
 document.documentElement.dataset.contextMenuAccessibilitySelfTestFailed=String(contextMenuAccessibilitySelfTestResult.failed);
 document.documentElement.dataset.contextMenuAccessibilitySelfTestDetail=contextMenuAccessibilitySelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+const searchExperienceSelfTestResult=runSearchExperienceSelfTest({toast:false});
+document.documentElement.dataset.searchExperienceSelfTest=searchExperienceSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.searchExperienceSelfTestPassed=String(searchExperienceSelfTestResult.passed);
+document.documentElement.dataset.searchExperienceSelfTestFailed=String(searchExperienceSelfTestResult.failed);
+document.documentElement.dataset.searchExperienceSelfTestDetail=searchExperienceSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 document.documentElement.dataset.keyboardAccessibilitySelfTest='manual';
 document.documentElement.dataset.keyboardAccessibilitySelfTestPassed='0';
 document.documentElement.dataset.keyboardAccessibilitySelfTestFailed='0';
