@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.19
+  版次 Version : 10.21
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,8 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.21 修正 HTML 單檔匯出自檢:保留內建 DEFAULT_MARKDOWN 供範本自檢使用,另以 EXPORTED_MARKDOWN 載入匯出的目前內容。
+     2026-07-03  v10.20 修正 HTML 單檔匯出內嵌位置:改為鎖定最後的啟動範本定義,避免誤替換自檢字串造成離線 HTML 無法啟動。
      2026-07-03  v10.19 新增匯出 HTML 單檔:可從檔案選單或命令面板下載目前工具的完整單檔 HTML,方便離線備份與分享。
      2026-07-03  v10.18 整合左下資訊欄:把教學提示、目前狀態、短暫訊息與錯誤警告集中到左下同一欄位,移除底部中央提示的視覺占位。
      2026-07-03  v10.17 讓原始 Markdown 面板診斷可點擊跳轉:點擊提示會自動捲到問題行、移動游標並高亮該行,方便直接修正。
@@ -649,7 +651,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.19';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.21';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -2635,7 +2637,7 @@ code block
     add('PDF 結構可產生且內含影像物件', pdfHead.startsWith('%PDF-1.4') && /\/Subtype \/Image/.test(pdfText) && /%%EOF/.test(new TextDecoder().decode(pdf.slice(-40))), String(pdf.length));
     const htmlExport=buildSingleFileHTML(toMarkdown(roots));
     add('HTML 單檔匯出內容包含文件與目前版次', /^<!DOCTYPE html>/i.test(htmlExport) && htmlExport.includes("APP_VERSION = '"+APP_VERSION+"'"), htmlExport.slice(0,80));
-    add('HTML 單檔匯出會內嵌目前心智圖內容', htmlExport.includes('const DEFAULT_MARKDOWN = ') && htmlExport.includes('匯出自檢') && htmlExport.includes('分隔線'), 'embedded markdown');
+    add('HTML 單檔匯出會內嵌目前心智圖內容', htmlExport.includes('const EXPORTED_MARKDOWN = ') && htmlExport.includes('匯出自檢') && htmlExport.includes('分隔線'), 'embedded markdown');
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -3584,9 +3586,13 @@ function exportMd(){
 }
 function buildSingleFileHTML(markdown){
   const mdLiteral=JSON.stringify(markdown).replace(/<\/script/gi,'<\\/script');
-  const currentDefault=`const DEFAULT_MARKDOWN = ${mdLiteral};\nroots = parseMarkdown(DEFAULT_MARKDOWN);`;
+  const currentStartup=`const EXPORTED_MARKDOWN = ${mdLiteral};\nroots = parseMarkdown(EXPORTED_MARKDOWN);`;
   let html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
-  html=html.replace(/const DEFAULT_MARKDOWN = [\s\S]*?;\s*roots = parseMarkdown\(DEFAULT_MARKDOWN\);/, currentDefault);
+  const startupNeedle='roots = parseMarkdown(DEFAULT_MARKDOWN);';
+  const start=html.lastIndexOf(startupNeedle);
+  if(start>=0){
+    html=html.slice(0,start)+currentStartup+html.slice(start+startupNeedle.length);
+  }
   return html;
 }
 function exportHTML(){
