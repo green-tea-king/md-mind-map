@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.25
+  版次 Version : 10.26
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.26 強化鍵盤操作與無障礙:節點補 aria-label 與焦點、報告面板支援 Esc 關閉與焦點回復,新增鍵盤操作自檢。
      2026-07-04  v10.25 新增大型 Markdown 效能自檢:壓力測試大檔解析、節點數、同步延遲與匯出保真,並在載入檔案時記錄解析/渲染耗時。
      2026-07-04  v10.24 優化自檢報告面板可讀性:成功項目預設折疊、失敗項目自動展開,新增全部展開/收合並改善手機版底部抽屜顯示。
      2026-07-03  v10.23 新增自檢報告面板:完整自檢後可在畫面查看各組通過狀態、失敗項目與原因,不必查看 console 或 dataset。
@@ -700,7 +701,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.25';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.26';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -899,6 +900,16 @@ function markdownPerformanceLabel(perf){
   const level=perf.heavy ? '大型檔案保護中' : '大型檔案';
   return `${level} · 同步延遲 ${perf.debounceMs||300}ms`;
 }
+function nodeAriaLabel(n){
+  if(!n) return '心智圖節點';
+  if(n.kind==='hr') return 'Markdown 水平分隔線';
+  const title=String(n.title||n.refdef&&n.refdef.raw||n.code||'空白節點').replace(/\s+/g,' ').trim().slice(0,90);
+  const parts=['心智圖節點', title];
+  if(n.depth!=null) parts.push('第 '+(Number(n.depth)+1)+' 層');
+  if(n.children&&n.children.length) parts.push(n.collapsed?'已收合':'已展開');
+  if(n.checked!==undefined) parts.push(n.checked?'待辦已完成':'待辦未完成');
+  return parts.filter(Boolean).join('，');
+}
 function collectDiagnostics(){
   return {
     app:'MD心智圖',
@@ -938,6 +949,10 @@ function collectDiagnostics(){
     commandPaletteSelfTestPassed:document.documentElement.dataset.commandPaletteSelfTestPassed||'',
     commandPaletteSelfTestFailed:document.documentElement.dataset.commandPaletteSelfTestFailed||'',
     commandPaletteSelfTestDetail:document.documentElement.dataset.commandPaletteSelfTestDetail||'',
+    keyboardAccessibilitySelfTest:document.documentElement.dataset.keyboardAccessibilitySelfTest||'',
+    keyboardAccessibilitySelfTestPassed:document.documentElement.dataset.keyboardAccessibilitySelfTestPassed||'',
+    keyboardAccessibilitySelfTestFailed:document.documentElement.dataset.keyboardAccessibilitySelfTestFailed||'',
+    keyboardAccessibilitySelfTestDetail:document.documentElement.dataset.keyboardAccessibilitySelfTestDetail||'',
     interactionSelfTest:document.documentElement.dataset.interactionSelfTest||'',
     interactionSelfTestPassed:document.documentElement.dataset.interactionSelfTestPassed||'',
     interactionSelfTestFailed:document.documentElement.dataset.interactionSelfTestFailed||'',
@@ -1727,6 +1742,10 @@ function render(){
     d.className = 'node lv' + Math.min(it.depth,6) + (it.depth<=2 ? (' d'+it.depth) : '');
     d.dataset.id = it.node.id;
     const n = it.node;
+    d.tabIndex=0;
+    d.setAttribute('role','button');
+    d.setAttribute('aria-selected', selection.has(n)?'true':'false');
+    d.setAttribute('aria-label', nodeAriaLabel(n));
     if(n.kind==='preamble') d.classList.add('preamble');
     if(n.quote) d.classList.add('quote');   // 引用塊樣式
     if(n.fndef){ d.classList.add('fndef'); d.dataset.fnid=n.fnid;   // 腳註定義節點
@@ -3333,6 +3352,16 @@ viewport.addEventListener('mousedown', e=>{
     else { pan = {sx:e.clientX, sy:e.clientY, px:panX, py:panY, moved:false}; viewport.classList.add('panning'); }
   }
 });
+viewport.addEventListener('focusin', e=>{
+  const nodeDom=e.target&&e.target.closest&&e.target.closest('.node');
+  if(!nodeDom || editing) return;
+  const node=findByIdAll(nodeDom.dataset.id);
+  if(node && (node!==selected || selection.size!==1)){
+    selectOnly(node);
+    refreshSelectionDom();
+    highlightMdNode(node);
+  }
+});
 window.addEventListener('mousemove', e=>{
   if(marq){ updateMarquee(e); return; }
   if(drag){
@@ -3551,6 +3580,7 @@ viewport.addEventListener('touchcancel', ()=>{ clearLongPress(); touch=null; lon
 //===================== 鍵盤 =====================
 window.addEventListener('keydown', e=>{
   const _inTa = document.activeElement && document.activeElement.tagName==='TEXTAREA';
+  if(e.key==='Escape' && selfTestReportEl && selfTestReportEl.classList.contains('show')){ e.preventDefault(); closeSelfTestReport(); return; }
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='f' && !_inTa){ e.preventDefault(); openSearch(); return; }
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k' && !_inTa){ e.preventDefault(); runCommandSearch(); return; }
   const ae=document.activeElement; const inField = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.isContentEditable);
@@ -3566,7 +3596,7 @@ window.addEventListener('keydown', e=>{
   if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='i'){ e.preventDefault(); toggleWrap('*'); return; }
   if(!selected) return;
   if(e.key==='Tab'){ e.preventDefault(); if(e.shiftKey) addParent(); else addChild(); }
-  else if(e.key==='Enter'){ e.preventDefault(); addSibling(); }
+  else if(e.key==='Enter'){ e.preventDefault(); const focusedNode=ae&&ae.closest&&ae.closest('.node'); if(focusedNode) editSelected(); else addSibling(); }
   else if(e.key==='Delete' || e.key==='Backspace'){ e.preventDefault(); deleteNode(); }
   else if(e.key==='F2'){ e.preventDefault(); editSelected(); }
   else if(e.key.startsWith('Arrow')){ e.preventDefault(); moveSel(e.key); }
@@ -3941,6 +3971,7 @@ function getCommandItems(){
     {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
     {label:'分隔線位置自檢', hint:'診斷', aliases:'test hr separator position', fn:()=>runHrPositionSelfTest({toast:true,log:true})},
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
+    {label:'鍵盤操作自檢', hint:'診斷', aliases:'test keyboard accessibility focus escape aria', fn:()=>runKeyboardAccessibilitySelfTest({toast:true,log:true})},
     {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
     {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
   ];
@@ -3976,6 +4007,7 @@ function runCommandSearch(){
   cmdPaletteEl.classList.add('show');
   cmdInputEl.value='';
   renderCommandPalette();
+  cmdInputEl.focus();
   setTimeout(()=>{ if(cmdPaletteEl.classList.contains('show')) cmdInputEl.focus(); },0);
 }
 function closeCommandPalette(){ cmdPaletteEl.classList.remove('show'); }
@@ -4022,6 +4054,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
     {label:'✅ 執行分隔線位置自檢', fn:()=>runHrPositionSelfTest({toast:true, log:true})},
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
+    {label:'✅ 執行鍵盤操作自檢', fn:()=>runKeyboardAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
   ];
@@ -4541,6 +4574,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
     {name:'分隔線位置', result:runHrPositionSelfTest({toast:false, log:options.log})},
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
+    {name:'鍵盤操作', result:runKeyboardAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
   const checks=[];
@@ -4559,6 +4593,7 @@ const selfTestCloseEl=document.getElementById('selfTestClose');
 const selfTestExpandEl=document.getElementById('selfTestExpand');
 const selfTestCollapseEl=document.getElementById('selfTestCollapse');
 let lastSelfTestReport=null;
+let selfTestReturnFocus=null;
 function setReportGroupsCollapsed(collapsed){
   if(!selfTestBodyEl) return;
   selfTestBodyEl.querySelectorAll('.report-group').forEach(g=>{
@@ -4570,6 +4605,7 @@ function setReportGroupsCollapsed(collapsed){
 function showSelfTestReport(result){
   lastSelfTestReport=result;
   if(!selfTestReportEl || !selfTestSummaryEl || !selfTestBodyEl || !result) return result;
+  if(document.activeElement && !selfTestReportEl.contains(document.activeElement)) selfTestReturnFocus=document.activeElement;
   const total=(result.checks||[]).length;
   selfTestSummaryEl.textContent=result.ok ? `通過 ${result.passed}/${total}` : `失敗 ${result.failed} 組`;
   selfTestSummaryEl.classList.toggle('fail', !result.ok);
@@ -4624,13 +4660,19 @@ function showSelfTestReport(result){
     selfTestBodyEl.append(group);
   }
   selfTestReportEl.classList.add('show');
+  if(selfTestCloseEl) selfTestCloseEl.focus();
   return result;
 }
 function openSelfTestReport(){
   if(lastSelfTestReport) showSelfTestReport(lastSelfTestReport);
   else showSelfTestReport(runMindMapFullSelfTest({toast:false, report:false}));
 }
-function closeSelfTestReport(){ if(selfTestReportEl) selfTestReportEl.classList.remove('show'); }
+function closeSelfTestReport(){
+  if(selfTestReportEl) selfTestReportEl.classList.remove('show');
+  const el=selfTestReturnFocus;
+  selfTestReturnFocus=null;
+  if(el && typeof el.focus==='function' && document.contains(el)) el.focus();
+}
 selfTestCloseEl&&selfTestCloseEl.addEventListener('click', closeSelfTestReport);
 selfTestExpandEl&&selfTestExpandEl.addEventListener('click', ()=>setReportGroupsCollapsed(false));
 selfTestCollapseEl&&selfTestCollapseEl.addEventListener('click', ()=>setReportGroupsCollapsed(true));
@@ -4640,7 +4682,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -4665,6 +4707,53 @@ function runCommandPaletteSelfTest(options={}){
 }
 window.runMindMapInteractionSelfTest=runInteractionSelfTest;
 window.runCommandPaletteSelfTest=runCommandPaletteSelfTest;
+function runKeyboardAccessibilitySelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  const savedReport=lastSelfTestReport, reportWasOpen=!!(selfTestReportEl&&selfTestReportEl.classList.contains('show'));
+  try{
+    roots=parseMarkdown('# 鍵盤自檢\n- 第一個節點\n- 第二個節點\n');
+    roots.forEach(r=>setParents(r,null));
+    selected=roots[0]; selection=new Set([selected]);
+    render();
+    const firstNode=canvas.querySelector('.node');
+    add('節點可用鍵盤聚焦', !!firstNode && firstNode.tabIndex===0 && firstNode.getAttribute('role')==='button', firstNode&&firstNode.outerHTML.slice(0,120));
+    add('節點提供 aria-label 與選取狀態', !!firstNode && !!firstNode.getAttribute('aria-label') && firstNode.hasAttribute('aria-selected'), firstNode&&firstNode.getAttribute('aria-label'));
+    closeCommandPalette();
+    runCommandSearch();
+    add('命令面板開啟後焦點進入搜尋框', cmdPaletteEl.classList.contains('show') && document.activeElement===cmdInputEl, document.activeElement&&document.activeElement.id);
+    const escEvt=new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
+    cmdInputEl.dispatchEvent(escEvt);
+    add('命令面板支援 Esc 關閉', !cmdPaletteEl.classList.contains('show'), cmdPaletteEl.className);
+    const fakeResult={ok:true, passed:1, failed:0, checks:[{name:'鍵盤報告測試', ok:true, detail:'ok'}], groups:[{name:'鍵盤報告', result:{ok:true, passed:1, failed:0, checks:[{name:'可顯示', ok:true, detail:'ok'}]}}]};
+    firstNode&&firstNode.focus();
+    showSelfTestReport(fakeResult);
+    add('自檢報告開啟後焦點進入面板', selfTestReportEl.classList.contains('show') && document.activeElement===selfTestCloseEl, document.activeElement&&document.activeElement.id);
+    window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+    add('自檢報告支援 Esc 關閉並回復焦點', !selfTestReportEl.classList.contains('show') && document.activeElement===firstNode, document.activeElement&&document.activeElement.className);
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `鍵盤操作自檢通過:${result.passed}/${checks.length}` : `鍵盤操作自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'keyboard accessibility self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'鍵盤操作自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('鍵盤操作自檢執行失敗');
+    return result;
+  }finally{
+    lastSelfTestReport=savedReport;
+    if(reportWasOpen && savedReport) showSelfTestReport(savedReport); else closeSelfTestReport();
+    roots=savedRoots;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after keyboard self test'); }
+  }
+}
+window.runKeyboardAccessibilitySelfTest=runKeyboardAccessibilitySelfTest;
 window.runMindMapFullSelfTest=runMindMapFullSelfTest;
 
 //===================== 啟動範例 =====================
@@ -4829,7 +4918,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、鍵盤操作與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
@@ -4890,6 +4979,10 @@ document.documentElement.dataset.commandPaletteSelfTest=commandPaletteSelfTestRe
 document.documentElement.dataset.commandPaletteSelfTestPassed=String(commandPaletteSelfTestResult.passed);
 document.documentElement.dataset.commandPaletteSelfTestFailed=String(commandPaletteSelfTestResult.failed);
 document.documentElement.dataset.commandPaletteSelfTestDetail=commandPaletteSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+document.documentElement.dataset.keyboardAccessibilitySelfTest='manual';
+document.documentElement.dataset.keyboardAccessibilitySelfTestPassed='0';
+document.documentElement.dataset.keyboardAccessibilitySelfTestFailed='0';
+document.documentElement.dataset.keyboardAccessibilitySelfTestDetail='完整自檢或手動診斷時執行,避免啟動時操作焦點';
 const interactionSelfTestResult=runInteractionSelfTest({toast:false});
 document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
