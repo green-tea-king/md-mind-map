@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.27
-  最後更新 Updated: 2026-07-03
+  版次 Version : 10.28
+  最後更新 Updated: 2026-07-04
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.28 修正自動草稿復原提示反覆出現:取消復原時同步清除草稿,並新增 clearDraft=1 啟動清除入口。
      2026-07-04  v10.27 強化右鍵選單無障礙:補 role/aria-haspopup/aria-expanded,改善子選單鍵盤狀態,新增右鍵選單無障礙自檢。
      2026-07-04  v10.26 強化鍵盤操作與無障礙:節點補 aria-label 與焦點、報告面板支援 Esc 關閉與焦點回復,新增鍵盤操作自檢。
      2026-07-04  v10.25 新增大型 Markdown 效能自檢:壓力測試大檔解析、節點數、同步延遲與匯出保真,並在載入檔案時記錄解析/渲染耗時。
@@ -702,7 +703,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.27';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.28';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -3640,6 +3641,17 @@ function clearAutoDraft(){
   clearTimeout(autoDraftTimer); autoDraftTimer=null; lastDraftMarkdown='';
   storageRemove(AUTO_DRAFT_KEY, 'clear auto draft');
 }
+function consumeAutoDraftClearRequest(){
+  try{
+    const url=new URL(location.href);
+    if(!url.searchParams.has('clearDraft')) return false;
+    clearAutoDraft();
+    url.searchParams.delete('clearDraft');
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
+    setStatusMessage('已清除自動草稿','ok',2600);
+    return true;
+  }catch(e){ logCaught(e,'consume auto draft clear request'); return false; }
+}
 function scheduleAutoDraft(markdown){
   if(!autoDraftEnabled) return;
   markdown=String(markdown||'');
@@ -3671,7 +3683,7 @@ function restoreAutoDraftIfWanted(){
     if(!d || !d.markdown) return false;
     const when=d.updatedAt ? new Date(d.updatedAt).toLocaleString() : '未知時間';
     const name=d.currentFileName ? `「${d.currentFileName}」` : '未命名檔案';
-    if(!confirm(`找到未匯出的自動草稿。\n\n來源:${name}\n時間:${when}\n\n要復原這份草稿嗎?`)) return false;
+    if(!confirm(`找到未匯出的自動草稿。\n\n來源:${name}\n時間:${when}\n\n要復原這份草稿嗎?`)){ clearAutoDraft(); return false; }
     roots=parseMarkdown(d.markdown);
     currentName=d.currentName||null;
     currentFileName=d.currentFileName||null;
@@ -5069,7 +5081,8 @@ document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.o
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
 document.documentElement.dataset.interactionSelfTestFailed=String(interactionSelfTestResult.failed);
 document.documentElement.dataset.interactionSelfTestDetail=interactionSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
-const restoredAutoDraft=restoreAutoDraftIfWanted();
+const clearedAutoDraft=consumeAutoDraftClearRequest();
+const restoredAutoDraft=clearedAutoDraft ? false : restoreAutoDraftIfWanted();
 if(!restoredAutoDraft){
   selectOnly(roots[0]);
   markSaved();
