@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.10
+  版次 Version : 10.11
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.11 新增固定上下順序的分隔線位置自檢:確認不同層級的 --- 會落在原始 Markdown 前後同層節點之間。
      2026-07-03  v10.10 修正固定版面方向:改為父節點在左、同層由上往下排列,更貼近原始 Markdown 順序;拖曳提示恢復上方/下方語意。
      2026-07-03  v10.09 整理固定直式版面:加大同層橫向間距與分隔線基準寬度,拖曳提示改成直式左/右語言並補自檢。
      2026-07-03  v10.08 取消橫式瀏覽/方向切換:固定直式版面,移除工具列、右鍵選單與命令面板中的方向切換入口,讓畫面更接近原始 Markdown 順序。
@@ -618,7 +619,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.10';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.11';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -844,6 +845,10 @@ function collectDiagnostics(){
     mobileEntrySelfTest:document.documentElement.dataset.mobileEntrySelfTest||'',
     mobileEntrySelfTestPassed:document.documentElement.dataset.mobileEntrySelfTestPassed||'',
     mobileEntrySelfTestFailed:document.documentElement.dataset.mobileEntrySelfTestFailed||'',
+    hrPositionSelfTest:document.documentElement.dataset.hrPositionSelfTest||'',
+    hrPositionSelfTestPassed:document.documentElement.dataset.hrPositionSelfTestPassed||'',
+    hrPositionSelfTestFailed:document.documentElement.dataset.hrPositionSelfTestFailed||'',
+    hrPositionSelfTestDetail:document.documentElement.dataset.hrPositionSelfTestDetail||'',
     commandPaletteSelfTest:document.documentElement.dataset.commandPaletteSelfTest||'',
     commandPaletteSelfTestPassed:document.documentElement.dataset.commandPaletteSelfTestPassed||'',
     commandPaletteSelfTestFailed:document.documentElement.dataset.commandPaletteSelfTestFailed||'',
@@ -2917,6 +2922,72 @@ function runDragRuleSelfTest(){
   }
 }
 window.runMindMapDragRuleSelfTest=runDragRuleSelfTest;
+function runHrPositionSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  try{
+    autoDraftEnabled=false;
+    roots=parseMarkdown(`# 分隔線位置自檢
+- 第一段
+---
+- 第二段
+## 第二層
+- A
+---
+- B
+### 第三層
+- C
+---
+- D
+`);
+    roots.forEach(r=>setParents(r,null));
+    selected=roots[0]; selection=new Set([selected]);
+    render();
+    add('固定上下順序方向', orient==='h', orient);
+    function checkBetween(parent, beforeTitle, afterTitle, label){
+      const ch=parent.children||[];
+      const bi=ch.findIndex(n=>n.title===beforeTitle);
+      const ai=ch.findIndex(n=>n.title===afterTitle);
+      const hi=ch.findIndex((n,i)=>n.kind==='hr' && i>bi && i<ai);
+      const before=ch[bi], hr=ch[hi], after=ch[ai];
+      const bd=before&&canvas.querySelector(`.node[data-id="${before.id}"]`);
+      const hd=hr&&canvas.querySelector(`.node[data-id="${hr.id}"]`);
+      const ad=after&&canvas.querySelector(`.node[data-id="${after.id}"]`);
+      if(!(bd&&hd&&ad)){ add(label, false, `missing dom bi=${bi} hi=${hi} ai=${ai}`); return; }
+      const by=bd.offsetTop+bd.offsetHeight, hy=hd.offsetTop+hd.offsetHeight/2, ay=ad.offsetTop;
+      add(label, by <= hy && hy <= ay, `beforeBottom=${Math.round(by)}, hr=${Math.round(hy)}, afterTop=${Math.round(ay)}`);
+    }
+    const root=roots[0];
+    const h2=root.children.find(n=>n.title==='第二層');
+    const h3=h2 && h2.children.find(n=>n.title==='第三層');
+    checkBetween(root, '第一段', '第二段', '頂層內容分隔線位於前後段落之間');
+    if(h2) checkBetween(h2, 'A', 'B', '第二層分隔線位於前後段落之間'); else add('第二層分隔線位於前後段落之間', false, 'missing h2');
+    if(h3) checkBetween(h3, 'C', 'D', '第三層分隔線位於前後段落之間'); else add('第三層分隔線位於前後段落之間', false, 'missing h3');
+    const exported=toMarkdown(roots);
+    add('匯出仍保留三條分隔線', (exported.match(/^---$/gm)||[]).length>=3, exported);
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `分隔線位置自檢通過:${result.passed}/${checks.length}` : `分隔線位置自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'horizontal rule position self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'分隔線位置自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('分隔線位置自檢執行失敗');
+    return result;
+  }finally{
+    autoDraftEnabled=savedDraftEnabled;
+    roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after hr position self test'); }
+  }
+}
+window.runMindMapHrPositionSelfTest=runHrPositionSelfTest;
 function vrect(dom){ const r=dom.getBoundingClientRect(), v=viewport.getBoundingClientRect();
   return {left:r.left-v.left, top:r.top-v.top, right:r.right-v.left, bottom:r.bottom-v.top,
     cx:r.left-v.left+r.width/2, cy:r.top-v.top+r.height/2}; }
@@ -3582,6 +3653,7 @@ function getCommandItems(){
     {label:'Markdown 規則自檢', hint:'診斷', aliases:'test markdown rules', fn:()=>runMarkdownRuleSelfTest({toast:true,log:true})},
     {label:'匯出自檢', hint:'診斷', aliases:'test export', fn:()=>runExportSelfTest({toast:true,log:true})},
     {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
+    {label:'分隔線位置自檢', hint:'診斷', aliases:'test hr separator position', fn:()=>runHrPositionSelfTest({toast:true,log:true})},
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
     {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
     {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
@@ -3658,6 +3730,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
+    {label:'✅ 執行分隔線位置自檢', fn:()=>runHrPositionSelfTest({toast:true, log:true})},
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
@@ -4067,6 +4140,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
     {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
+    {name:'分隔線位置', result:runHrPositionSelfTest({toast:false, log:options.log})},
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
@@ -4269,7 +4343,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口、命令面板與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口、分隔線位置、命令面板與完整流程
 - 匯出自檢:會確認分隔線、表格、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
 ### 編輯結構
@@ -4309,6 +4383,11 @@ const mobileEntrySelfTestResult=runMobileEntrySelfTest({toast:false});
 document.documentElement.dataset.mobileEntrySelfTest=mobileEntrySelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.mobileEntrySelfTestPassed=String(mobileEntrySelfTestResult.passed);
 document.documentElement.dataset.mobileEntrySelfTestFailed=String(mobileEntrySelfTestResult.failed);
+const hrPositionSelfTestResult=runHrPositionSelfTest({toast:false});
+document.documentElement.dataset.hrPositionSelfTest=hrPositionSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.hrPositionSelfTestPassed=String(hrPositionSelfTestResult.passed);
+document.documentElement.dataset.hrPositionSelfTestFailed=String(hrPositionSelfTestResult.failed);
+document.documentElement.dataset.hrPositionSelfTestDetail=hrPositionSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 const commandPaletteSelfTestResult=runCommandPaletteSelfTest({toast:false});
 document.documentElement.dataset.commandPaletteSelfTest=commandPaletteSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.commandPaletteSelfTestPassed=String(commandPaletteSelfTestResult.passed);
