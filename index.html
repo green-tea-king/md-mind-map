@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.24
+  版次 Version : 10.25
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.25 新增大型 Markdown 效能自檢:壓力測試大檔解析、節點數、同步延遲與匯出保真,並在載入檔案時記錄解析/渲染耗時。
      2026-07-04  v10.24 優化自檢報告面板可讀性:成功項目預設折疊、失敗項目自動展開,新增全部展開/收合並改善手機版底部抽屜顯示。
      2026-07-03  v10.23 新增自檢報告面板:完整自檢後可在畫面查看各組通過狀態、失敗項目與原因,不必查看 console 或 dataset。
      2026-07-03  v10.22 新增 HTML 單檔匯出回歸自檢:獨立驗證匯出 HTML 可解析、保留內建範本、內嵌目前內容,並可重新解析分隔線與表格。
@@ -699,7 +700,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.24';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.25';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -918,6 +919,10 @@ function collectDiagnostics(){
     templateSelfTestPassed:document.documentElement.dataset.templateSelfTestPassed||'',
     markdownRuleSelfTest:document.documentElement.dataset.markdownRuleSelfTest||'',
     markdownRuleSelfTestPassed:document.documentElement.dataset.markdownRuleSelfTestPassed||'',
+    largeMarkdownSelfTest:document.documentElement.dataset.largeMarkdownSelfTest||'',
+    largeMarkdownSelfTestPassed:document.documentElement.dataset.largeMarkdownSelfTestPassed||'',
+    largeMarkdownSelfTestFailed:document.documentElement.dataset.largeMarkdownSelfTestFailed||'',
+    largeMarkdownSelfTestDetail:document.documentElement.dataset.largeMarkdownSelfTestDetail||'',
     exportSelfTest:document.documentElement.dataset.exportSelfTest||'',
     exportSelfTestPassed:document.documentElement.dataset.exportSelfTestPassed||'',
     exportSelfTestFailed:document.documentElement.dataset.exportSelfTestFailed||'',
@@ -3664,8 +3669,13 @@ function loadFile(file){
   flushPendingMdText();
   if(!confirmReplace()) return;
   const r=new FileReader();
-  r.onload=()=>{ originalMarkdownText=String(r.result); roots=parseMarkdown(originalMarkdownText); selectOnly(roots[0]); history.length=0; clearSearch();
-    redoStack.length=0; currentFileName=file.name; currentName=file.name.replace(/\.(md|markdown|txt)$/i,''); markSaved(); render(); fit(); };   // 顏色由主題即時套用
+  r.onload=()=>{ originalMarkdownText=String(r.result); const stats=markdownPerfStats(originalMarkdownText); const t0=performance.now();
+    if(stats.large) setStatusMessage(`正在載入大型 Markdown:${stats.lines} 行`,'warn',0);
+    roots=parseMarkdown(originalMarkdownText); const t1=performance.now(); selectOnly(roots[0]); history.length=0; clearSearch();
+    redoStack.length=0; currentFileName=file.name; currentName=file.name.replace(/\.(md|markdown|txt)$/i,''); markSaved(); render(); const t2=performance.now(); fit();
+    const perf=updateMarkdownPerformance(stats, roots.reduce((s,r)=>s+countNodes(r),0), t1-t0, t2-t1, markdownCommitDelay(originalMarkdownText));
+    if(perf.large) setStatusMessage(`大型 Markdown 已載入:${perf.nodes} 節點 · 解析 ${perf.parseMs}ms · 渲染 ${perf.renderMs}ms`,'info',5200);
+  };   // 顏色由主題即時套用
   r.readAsText(file,'utf-8');
 }
 let currentName=null;   // 載入檔案的原檔名(不含副檔名);null = 非由檔案載入
@@ -3925,6 +3935,7 @@ function getCommandItems(){
     {label:'自檢報告', hint:'診斷', aliases:'self test report diagnostics', fn:openSelfTestReport},
     {label:'範本自檢', hint:'診斷', aliases:'test template', fn:()=>runTemplateSelfTest({toast:true,log:true})},
     {label:'Markdown 規則自檢', hint:'診斷', aliases:'test markdown rules', fn:()=>runMarkdownRuleSelfTest({toast:true,log:true})},
+    {label:'大型 Markdown 自檢', hint:'診斷', aliases:'test large markdown performance stress', fn:()=>runLargeMarkdownPerformanceSelfTest({toast:true,log:true})},
     {label:'匯出自檢', hint:'診斷', aliases:'test export', fn:()=>runExportSelfTest({toast:true,log:true})},
     {label:'HTML 單檔自檢', hint:'診斷', aliases:'test html single file export regression', fn:()=>runHtmlSingleFileSelfTest({toast:true,log:true})},
     {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
@@ -4005,6 +4016,7 @@ function buildMainMenuItems(){
     {label:'📋 查看自檢報告', fn:openSelfTestReport},
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
+    {label:'✅ 執行大型 Markdown 自檢', fn:()=>runLargeMarkdownPerformanceSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
     {label:'✅ 執行 HTML 單檔自檢', fn:()=>runHtmlSingleFileSelfTest({toast:true, log:true})},
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
@@ -4376,6 +4388,53 @@ function runMarkdownRuleSelfTest(options={}){
   }
 }
 window.runMindMapMarkdownRuleSelfTest=runMarkdownRuleSelfTest;
+function buildLargeMarkdownFixture(count=PERF_WARN_LINES+160){
+  const lines=['# Large Markdown Performance Test','', '> 大型檔案壓力測試'];
+  for(let i=1;i<=count;i++){
+    if(i%120===0) lines.push('', '---', '');
+    if(i%90===0) lines.push(`## Section ${i}`);
+    lines.push(`- Node ${i}`);
+    if(i%55===0) lines.push(`  - Child ${i}.1`, `  - Child ${i}.2`);
+    if(i%240===0) lines.push('', '| Item | Count | State |', '| --- | ---: | :---: |', `| Batch ${i} | ${i} | OK |`, '');
+  }
+  return lines.join('\n');
+}
+function runLargeMarkdownPerformanceSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  const savedPerf=lastMarkdownPerformance;
+  try{
+    const md=buildLargeMarkdownFixture();
+    const stats=markdownPerfStats(md);
+    const delay=markdownCommitDelay(md);
+    const t0=performance.now();
+    const parsed=parseMarkdown(md);
+    const t1=performance.now();
+    const nodeCount=parsed.reduce((s,r)=>s+countNodes(r),0);
+    const exported=toMarkdown(parsed);
+    add('壓力測試樣本達大型檔案門檻', stats.large && !stats.heavy, `${stats.lines} lines, ${stats.chars} chars`);
+    add('大型 Markdown 會使用較長同步延遲', delay===700, String(delay));
+    add('大型 Markdown 可解析出足夠節點', nodeCount>=PERF_WARN_LINES, String(nodeCount));
+    add('大型 Markdown 解析時間可量測', Number.isFinite(t1-t0) && (t1-t0)>=0 && (t1-t0)<5000, `${Math.round(t1-t0)}ms`);
+    add('大型 Markdown 匯出仍保留分隔線與表格', /^---$/m.test(exported) && /\| Item \| Count \| State \|/.test(exported), 'hr/table');
+    const heavyMd=buildLargeMarkdownFixture(PERF_HEAVY_LINES+80);
+    add('超大型 Markdown 會進入重度保護延遲', markdownCommitDelay(heavyMd)===1200, String(markdownCommitDelay(heavyMd)));
+    const perf=updateMarkdownPerformance(stats, nodeCount, t1-t0, 0, delay);
+    add('效能資料會寫入診斷狀態', lastMarkdownPerformance.nodes===nodeCount && lastMarkdownPerformance.large && lastMarkdownPerformance.parseMs===Math.round(t1-t0), JSON.stringify(perf));
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `大型 Markdown 自檢通過:${result.passed}/${checks.length}` : `大型 Markdown 自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'large markdown performance self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'大型 Markdown 自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('大型 Markdown 自檢執行失敗');
+    return result;
+  }finally{
+    lastMarkdownPerformance=savedPerf;
+  }
+}
+window.runMindMapLargeMarkdownPerformanceSelfTest=runLargeMarkdownPerformanceSelfTest;
 function runInteractionSelfTest(options={}){
   const checks=[];
   const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
@@ -4476,6 +4535,7 @@ function runMindMapFullSelfTest(options={}){
   const groups=[
     {name:'範本', result:runTemplateSelfTest({toast:false, log:options.log})},
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
+    {name:'大型 Markdown', result:runLargeMarkdownPerformanceSelfTest({toast:false, log:options.log})},
     {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
     {name:'HTML 單檔', result:runHtmlSingleFileSelfTest({toast:false, log:options.log})},
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
@@ -4580,7 +4640,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -4769,7 +4829,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、HTML 單檔、手機入口、分隔線位置、命令面板與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
@@ -4801,6 +4861,11 @@ const markdownRuleSelfTestResult=runMarkdownRuleSelfTest({toast:false});
 document.documentElement.dataset.markdownRuleSelfTest=markdownRuleSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.markdownRuleSelfTestPassed=String(markdownRuleSelfTestResult.passed);
 document.documentElement.dataset.markdownRuleSelfTestFailed=String(markdownRuleSelfTestResult.failed);
+const largeMarkdownSelfTestResult=runLargeMarkdownPerformanceSelfTest({toast:false});
+document.documentElement.dataset.largeMarkdownSelfTest=largeMarkdownSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.largeMarkdownSelfTestPassed=String(largeMarkdownSelfTestResult.passed);
+document.documentElement.dataset.largeMarkdownSelfTestFailed=String(largeMarkdownSelfTestResult.failed);
+document.documentElement.dataset.largeMarkdownSelfTestDetail=largeMarkdownSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 const exportSelfTestResult=runExportSelfTest({toast:false});
 document.documentElement.dataset.exportSelfTest=exportSelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.exportSelfTestPassed=String(exportSelfTestResult.passed);
