@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.21
+  版次 Version : 10.22
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.22 新增 HTML 單檔匯出回歸自檢:獨立驗證匯出 HTML 可解析、保留內建範本、內嵌目前內容,並可重新解析分隔線與表格。
      2026-07-03  v10.21 修正 HTML 單檔匯出自檢:保留內建 DEFAULT_MARKDOWN 供範本自檢使用,另以 EXPORTED_MARKDOWN 載入匯出的目前內容。
      2026-07-03  v10.20 修正 HTML 單檔匯出內嵌位置:改為鎖定最後的啟動範本定義,避免誤替換自檢字串造成離線 HTML 無法啟動。
      2026-07-03  v10.19 新增匯出 HTML 單檔:可從檔案選單或命令面板下載目前工具的完整單檔 HTML,方便離線備份與分享。
@@ -651,7 +652,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.21';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.22';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -2661,6 +2662,59 @@ code block
 }
 window.runMindMapExportSelfTest=runExportSelfTest;
 
+function runHtmlSingleFileSelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  try{
+    const closingTag='</'+'script>';
+    const md=`# HTML Single File Regression
+
+This content must survive single-file HTML export.
+
+---
+
+| Item | Count | State |
+| --- | ---: | :---: |
+| Divider | 1 | OK |
+| Table | 1 | OK |
+
+## Script Boundary
+- Literal closing tag: ${closingTag}
+`;
+    const html=buildSingleFileHTML(md);
+    add('HTML 單檔含 DOCTYPE 與目前版次', /^<!DOCTYPE html>/i.test(html) && html.includes("APP_VERSION = '"+APP_VERSION+"'"), html.slice(0,80));
+    add('HTML 單檔保留內建範本定義', html.includes('const DEFAULT_MARKDOWN = `') && html.includes('runTemplateSelfTest'), 'DEFAULT_MARKDOWN');
+    add('HTML 單檔改由 EXPORTED_MARKDOWN 啟動', html.includes('const EXPORTED_MARKDOWN = ') && html.includes('roots = parseMarkdown(EXPORTED_MARKDOWN);'), 'EXPORTED_MARKDOWN');
+    add('HTML 單檔已跳脫 script 結尾字串', html.includes('<\\/script>') && !html.includes('Literal closing tag: '+closingTag), 'script boundary');
+    const openingTag='<'+ 'script>';
+    const scriptStart=html.lastIndexOf(openingTag), scriptEnd=html.lastIndexOf(closingTag);
+    const script=(scriptStart>=0 && scriptEnd>scriptStart) ? html.slice(scriptStart+8, scriptEnd) : '';
+    try{ new Function(script); add('HTML 單檔內嵌腳本語法可解析', true, String(script.length)); }
+    catch(e){ add('HTML 單檔內嵌腳本語法可解析', false, String(e&&e.message||e)); }
+    const exportNeedle='const EXPORTED_MARKDOWN = ';
+    const startupNeedle='roots = parseMarkdown(EXPORTED_MARKDOWN);';
+    const exportStart=script.lastIndexOf(exportNeedle);
+    const startupStart=exportStart>=0 ? script.indexOf(startupNeedle, exportStart) : -1;
+    const literalSource=(exportStart>=0 && startupStart>exportStart) ? script.slice(exportStart+exportNeedle.length, startupStart).replace(/;\s*$/,'') : '';
+    let exportedMd='';
+    try{ exportedMd=literalSource ? JSON.parse(literalSource) : ''; }catch(e){ exportedMd=''; }
+    add('HTML 單檔可取回內嵌 Markdown', exportedMd.includes('HTML Single File Regression') && exportedMd.includes('Literal closing tag: '+closingTag), exportedMd.slice(0,80));
+    const parsed=exportedMd ? parseMarkdown(exportedMd) : [];
+    const stats=collectTemplateStats(parsed);
+    add('內嵌 Markdown 重新解析後保留分隔線與表格', stats.hr>=1 && stats.table>=1, `hr=${stats.hr}, table=${stats.table}`);
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `HTML 單檔自檢通過:${result.passed}/${checks.length}` : `HTML 單檔自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'html single-file self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'HTML 單檔自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('HTML 單檔自檢執行失敗');
+    return result;
+  }
+}
+window.runMindMapHtmlSingleFileSelfTest=runHtmlSingleFileSelfTest;
+
 function runMobileEntrySelfTest(options={}){
   const checks=[]; const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
   try{
@@ -3824,6 +3878,7 @@ function getCommandItems(){
     {label:'範本自檢', hint:'診斷', aliases:'test template', fn:()=>runTemplateSelfTest({toast:true,log:true})},
     {label:'Markdown 規則自檢', hint:'診斷', aliases:'test markdown rules', fn:()=>runMarkdownRuleSelfTest({toast:true,log:true})},
     {label:'匯出自檢', hint:'診斷', aliases:'test export', fn:()=>runExportSelfTest({toast:true,log:true})},
+    {label:'HTML 單檔自檢', hint:'診斷', aliases:'test html single file export regression', fn:()=>runHtmlSingleFileSelfTest({toast:true,log:true})},
     {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
     {label:'分隔線位置自檢', hint:'診斷', aliases:'test hr separator position', fn:()=>runHrPositionSelfTest({toast:true,log:true})},
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
@@ -3902,6 +3957,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行範本自檢', fn:()=>runTemplateSelfTest({toast:true, log:true})},
     {label:'✅ 執行 Markdown 規則自檢', fn:()=>runMarkdownRuleSelfTest({toast:true, log:true})},
     {label:'✅ 執行匯出自檢', fn:()=>runExportSelfTest({toast:true, log:true})},
+    {label:'✅ 執行 HTML 單檔自檢', fn:()=>runHtmlSingleFileSelfTest({toast:true, log:true})},
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
     {label:'✅ 執行分隔線位置自檢', fn:()=>runHrPositionSelfTest({toast:true, log:true})},
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
@@ -4372,6 +4428,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'範本', result:runTemplateSelfTest({toast:false, log:options.log})},
     {name:'Markdown 規則', result:runMarkdownRuleSelfTest({toast:false, log:options.log})},
     {name:'匯出視覺', result:runExportSelfTest({toast:false, log:options.log})},
+    {name:'HTML 單檔', result:runHtmlSingleFileSelfTest({toast:false, log:options.log})},
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
     {name:'分隔線位置', result:runHrPositionSelfTest({toast:false, log:options.log})},
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
@@ -4391,7 +4448,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     runCommandSearch();
@@ -4579,7 +4636,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口、分隔線位置、命令面板與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、HTML 單檔、手機入口、分隔線位置、命令面板與完整流程
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
 ### 編輯結構
@@ -4615,6 +4672,11 @@ document.documentElement.dataset.exportSelfTest=exportSelfTestResult.ok?'pass':'
 document.documentElement.dataset.exportSelfTestPassed=String(exportSelfTestResult.passed);
 document.documentElement.dataset.exportSelfTestFailed=String(exportSelfTestResult.failed);
 document.documentElement.dataset.exportSelfTestDetail=exportSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+const htmlSingleFileSelfTestResult=runHtmlSingleFileSelfTest({toast:false});
+document.documentElement.dataset.htmlSingleFileSelfTest=htmlSingleFileSelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.htmlSingleFileSelfTestPassed=String(htmlSingleFileSelfTestResult.passed);
+document.documentElement.dataset.htmlSingleFileSelfTestFailed=String(htmlSingleFileSelfTestResult.failed);
+document.documentElement.dataset.htmlSingleFileSelfTestDetail=htmlSingleFileSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 const mobileEntrySelfTestResult=runMobileEntrySelfTest({toast:false});
 document.documentElement.dataset.mobileEntrySelfTest=mobileEntrySelfTestResult.ok?'pass':'fail';
 document.documentElement.dataset.mobileEntrySelfTestPassed=String(mobileEntrySelfTestResult.passed);
