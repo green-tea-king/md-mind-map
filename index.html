@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.26
+  版次 Version : 10.27
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.27 強化右鍵選單無障礙:補 role/aria-haspopup/aria-expanded,改善子選單鍵盤狀態,新增右鍵選單無障礙自檢。
      2026-07-04  v10.26 強化鍵盤操作與無障礙:節點補 aria-label 與焦點、報告面板支援 Esc 關閉與焦點回復,新增鍵盤操作自檢。
      2026-07-04  v10.25 新增大型 Markdown 效能自檢:壓力測試大檔解析、節點數、同步延遲與匯出保真,並在載入檔案時記錄解析/渲染耗時。
      2026-07-04  v10.24 優化自檢報告面板可讀性:成功項目預設折疊、失敗項目自動展開,新增全部展開/收合並改善手機版底部抽屜顯示。
@@ -701,7 +702,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.26';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.27';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -949,6 +950,10 @@ function collectDiagnostics(){
     commandPaletteSelfTestPassed:document.documentElement.dataset.commandPaletteSelfTestPassed||'',
     commandPaletteSelfTestFailed:document.documentElement.dataset.commandPaletteSelfTestFailed||'',
     commandPaletteSelfTestDetail:document.documentElement.dataset.commandPaletteSelfTestDetail||'',
+    contextMenuAccessibilitySelfTest:document.documentElement.dataset.contextMenuAccessibilitySelfTest||'',
+    contextMenuAccessibilitySelfTestPassed:document.documentElement.dataset.contextMenuAccessibilitySelfTestPassed||'',
+    contextMenuAccessibilitySelfTestFailed:document.documentElement.dataset.contextMenuAccessibilitySelfTestFailed||'',
+    contextMenuAccessibilitySelfTestDetail:document.documentElement.dataset.contextMenuAccessibilitySelfTestDetail||'',
     keyboardAccessibilitySelfTest:document.documentElement.dataset.keyboardAccessibilitySelfTest||'',
     keyboardAccessibilitySelfTestPassed:document.documentElement.dataset.keyboardAccessibilitySelfTestPassed||'',
     keyboardAccessibilitySelfTestFailed:document.documentElement.dataset.keyboardAccessibilitySelfTestFailed||'',
@@ -3887,16 +3892,29 @@ const ctxEl=document.getElementById('ctxmenu');
 let ctxSubs=[];   // 開啟中的子選單堆疊
 function closeSubsFrom(level){ while(ctxSubs.length>level){ ctxSubs.pop().remove(); } }
 function hideCtx(){ ctxEl.style.display='none'; clearTrustedHTML(ctxEl); closeSubsFrom(0); }
+function closeSiblingSubmenus(level, owner){
+  closeSubsFrom(level);
+  const menu=owner&&owner.parentElement;
+  if(menu) menu.querySelectorAll(':scope > button[aria-haspopup="menu"]').forEach(b=>{ if(b!==owner) b.setAttribute('aria-expanded','false'); });
+}
 function renderMenu(container, items, level){
+  container.setAttribute('role','menu');
+  container.setAttribute('aria-label', level ? '右鍵子選單' : '右鍵選單');
   for(const it of items){
-    if(it==='—'){ const d=document.createElement('div'); d.className='mdiv'; container.appendChild(d); continue; }
-    if(it && it.header){ const h=document.createElement('div'); h.className='ctxhdr'; h.textContent=it.header; container.appendChild(h); continue; }
+    if(it==='—'){ const d=document.createElement('div'); d.className='mdiv'; d.setAttribute('role','separator'); container.appendChild(d); continue; }
+    if(it && it.header){ const h=document.createElement('div'); h.className='ctxhdr'; h.setAttribute('role','presentation'); h.textContent=it.header; container.appendChild(h); continue; }
     const b=document.createElement('button');
+    b.type='button';
+    b.setAttribute('role','menuitem');
     setTrustedHTML(b, it.sub ? `${escHtml(it.label)}<small>▸</small>` : (it.key ? `${escHtml(it.label)}<small>${escHtml(it.key)}</small>` : escHtml(it.label)), 'context menu item');
+    b.setAttribute('aria-label', String(it.label||'').replace(/[^\p{L}\p{N}\s/.-]/gu,'').trim() || '選單項目');
     if(it.disabled){ b.disabled=true; container.appendChild(b); continue; }
     if(it.sub){
+      b.setAttribute('aria-haspopup','menu');
+      b.setAttribute('aria-expanded','false');
       b.addEventListener('mouseenter', ()=>{
-        closeSubsFrom(level);
+        closeSiblingSubmenus(level, b);
+        b.setAttribute('aria-expanded','true');
         const sub=document.createElement('div'); sub.className='ctxmenu'; sub.style.display='block';
         renderMenu(sub, it.sub, level+1);
         wireMenuKeyboard(sub);
@@ -3907,7 +3925,7 @@ function renderMenu(container, items, level){
         sub.style.left=sx+'px'; sub.style.top=sy+'px';
       });
     } else {
-      b.addEventListener('mouseenter', ()=>closeSubsFrom(level));
+      b.addEventListener('mouseenter', ()=>closeSiblingSubmenus(level, b));
       b.onclick=()=>{ hideCtx(); it.fn(); };
     }
     container.appendChild(b);
@@ -3936,8 +3954,8 @@ function wireMenuKeyboard(menu){
     if(e.key==='ArrowDown'){ e.preventDefault(); focusMenuButton(menu, 1); }
     else if(e.key==='ArrowUp'){ e.preventDefault(); focusMenuButton(menu, -1); }
     else if(e.key==='Enter' || e.key===' '){ e.preventDefault(); if(document.activeElement && menu.contains(document.activeElement)) document.activeElement.click(); }
-    else if(e.key==='ArrowRight'){ e.preventDefault(); const ev=new Event('mouseenter'); if(document.activeElement) document.activeElement.dispatchEvent(ev); const sub=ctxSubs[ctxSubs.length-1]; if(sub){ const b=sub.querySelector('button:not(:disabled)'); if(b) b.focus(); } }
-    else if(e.key==='ArrowLeft'){ e.preventDefault(); const sub=ctxSubs.pop(); if(sub) sub.remove(); }
+    else if(e.key==='ArrowRight'){ e.preventDefault(); const active=document.activeElement; if(active&&active.getAttribute('aria-haspopup')==='menu'){ active.dispatchEvent(new Event('mouseenter')); const sub=ctxSubs[ctxSubs.length-1]; if(sub){ const b=sub.querySelector('button:not(:disabled)'); if(b) b.focus(); } } }
+    else if(e.key==='ArrowLeft'){ e.preventDefault(); const parentMenu=menu.parentElement&&menu.parentElement.closest&&menu.parentElement.closest('.ctxmenu'); const sub=ctxSubs.pop(); if(sub) sub.remove(); const owner=[...document.querySelectorAll('.ctxmenu button[aria-expanded="true"]')].pop(); if(owner){ owner.setAttribute('aria-expanded','false'); owner.focus(); } else if(parentMenu){ const b=parentMenu.querySelector('button:not(:disabled)'); if(b) b.focus(); } }
     else if(e.key==='Escape'){ e.preventDefault(); hideCtx(); }
   });
 }
@@ -3971,6 +3989,7 @@ function getCommandItems(){
     {label:'手機入口自檢', hint:'診斷', aliases:'test mobile', fn:()=>runMobileEntrySelfTest({toast:true,log:true})},
     {label:'分隔線位置自檢', hint:'診斷', aliases:'test hr separator position', fn:()=>runHrPositionSelfTest({toast:true,log:true})},
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
+    {label:'右鍵選單自檢', hint:'診斷', aliases:'test context menu accessibility aria keyboard', fn:()=>runContextMenuAccessibilitySelfTest({toast:true,log:true})},
     {label:'鍵盤操作自檢', hint:'診斷', aliases:'test keyboard accessibility focus escape aria', fn:()=>runKeyboardAccessibilitySelfTest({toast:true,log:true})},
     {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
     {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
@@ -4054,6 +4073,7 @@ function buildMainMenuItems(){
     {label:'✅ 執行手機入口自檢', fn:()=>runMobileEntrySelfTest({toast:true, log:true})},
     {label:'✅ 執行分隔線位置自檢', fn:()=>runHrPositionSelfTest({toast:true, log:true})},
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
+    {label:'✅ 執行右鍵選單自檢', fn:()=>runContextMenuAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行鍵盤操作自檢', fn:()=>runKeyboardAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
@@ -4574,6 +4594,7 @@ function runMindMapFullSelfTest(options={}){
     {name:'手機入口', result:runMobileEntrySelfTest({toast:false, log:options.log})},
     {name:'分隔線位置', result:runHrPositionSelfTest({toast:false, log:options.log})},
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
+    {name:'右鍵選單', result:runContextMenuAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'鍵盤操作', result:runKeyboardAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
@@ -4682,7 +4703,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -4707,6 +4728,61 @@ function runCommandPaletteSelfTest(options={}){
 }
 window.runMindMapInteractionSelfTest=runInteractionSelfTest;
 window.runCommandPaletteSelfTest=runCommandPaletteSelfTest;
+function runContextMenuAccessibilitySelfTest(options={}){
+  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
+  const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
+  try{
+    roots=parseMarkdown('# 右鍵選單自檢\n- 節點\n');
+    roots.forEach(r=>setParents(r,null));
+    selected=roots[0]; selection=new Set([selected]);
+    render();
+    const dom=canvas.querySelector('.node');
+    if(dom){
+      dom.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:160,clientY:160}));
+      add('右鍵選單本體使用 menu role', ctxEl.getAttribute('role')==='menu' && !!ctxEl.getAttribute('aria-label'), `${ctxEl.getAttribute('role')}/${ctxEl.getAttribute('aria-label')}`);
+      const items=[...ctxEl.querySelectorAll(':scope > button')];
+      add('右鍵選單項目使用 menuitem role', items.length>0 && items.every(b=>b.getAttribute('role')==='menuitem'), String(items.length));
+      const subOwner=items.find(b=>b.getAttribute('aria-haspopup')==='menu');
+      add('有子選單的項目標示 haspopup 與 expanded', !!subOwner && subOwner.getAttribute('aria-expanded')==='false', subOwner&&subOwner.textContent);
+      if(subOwner){
+        subOwner.focus();
+        subOwner.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true}));
+        const sub=ctxSubs[ctxSubs.length-1];
+        add('方向鍵可開啟子選單並更新 expanded', !!sub && sub.getAttribute('role')==='menu' && subOwner.getAttribute('aria-expanded')==='true', `${!!sub}/${subOwner.getAttribute('aria-expanded')}`);
+        const focusedInSub=!!(sub && sub.contains(document.activeElement));
+        add('開啟子選單後焦點進入子選單', focusedInSub, document.activeElement&&document.activeElement.textContent);
+        if(sub){
+          sub.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true}));
+          add('左方向鍵可關閉子選單並回到父項', ctxSubs.length===0 && subOwner.getAttribute('aria-expanded')==='false' && document.activeElement===subOwner, `${ctxSubs.length}/${subOwner.getAttribute('aria-expanded')}`);
+        }
+      }
+      ctxEl.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      add('Esc 可關閉右鍵選單', ctxEl.style.display==='none', ctxEl.style.display);
+    } else {
+      add('右鍵選單測試節點存在', false, 'missing node');
+    }
+    const failed=checks.filter(c=>!c.ok);
+    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
+    if(options.log) console.table(checks);
+    if(options.toast) showToast(result.ok ? `右鍵選單自檢通過:${result.passed}/${checks.length}` : `右鍵選單自檢失敗:${failed.length} 項`);
+    return result;
+  }catch(e){
+    logCaught(e,'context menu accessibility self test');
+    const result={ok:false, passed:0, failed:1, checks:[{name:'右鍵選單自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
+    if(options.toast) showToast('右鍵選單自檢執行失敗');
+    return result;
+  }finally{
+    hideCtx();
+    roots=savedRoots;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelectedId ? findByIdAll(savedSelectedId) : null;
+    if(!selected && selection.size) selected=[...selection][0];
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after context menu self test'); }
+  }
+}
+window.runContextMenuAccessibilitySelfTest=runContextMenuAccessibilitySelfTest;
 function runKeyboardAccessibilitySelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
@@ -4918,7 +4994,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、鍵盤操作與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、右鍵選單、鍵盤操作與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
@@ -4979,6 +5055,11 @@ document.documentElement.dataset.commandPaletteSelfTest=commandPaletteSelfTestRe
 document.documentElement.dataset.commandPaletteSelfTestPassed=String(commandPaletteSelfTestResult.passed);
 document.documentElement.dataset.commandPaletteSelfTestFailed=String(commandPaletteSelfTestResult.failed);
 document.documentElement.dataset.commandPaletteSelfTestDetail=commandPaletteSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+const contextMenuAccessibilitySelfTestResult=runContextMenuAccessibilitySelfTest({toast:false});
+document.documentElement.dataset.contextMenuAccessibilitySelfTest=contextMenuAccessibilitySelfTestResult.ok?'pass':'fail';
+document.documentElement.dataset.contextMenuAccessibilitySelfTestPassed=String(contextMenuAccessibilitySelfTestResult.passed);
+document.documentElement.dataset.contextMenuAccessibilitySelfTestFailed=String(contextMenuAccessibilitySelfTestResult.failed);
+document.documentElement.dataset.contextMenuAccessibilitySelfTestDetail=contextMenuAccessibilitySelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 document.documentElement.dataset.keyboardAccessibilitySelfTest='manual';
 document.documentElement.dataset.keyboardAccessibilitySelfTestPassed='0';
 document.documentElement.dataset.keyboardAccessibilitySelfTestFailed='0';
