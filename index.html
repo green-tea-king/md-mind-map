@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.18
+  版次 Version : 10.19
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.19 新增匯出 HTML 單檔:可從檔案選單或命令面板下載目前工具的完整單檔 HTML,方便離線備份與分享。
      2026-07-03  v10.18 整合左下資訊欄:把教學提示、目前狀態、短暫訊息與錯誤警告集中到左下同一欄位,移除底部中央提示的視覺占位。
      2026-07-03  v10.17 讓原始 Markdown 面板診斷可點擊跳轉:點擊提示會自動捲到問題行、移動游標並高亮該行,方便直接修正。
      2026-07-03  v10.16 強化原始 Markdown 面板狀態提示:新增常見語法問題行號診斷,可提示未閉合程式碼圍欄、HTML 註解/details 與表格欄數不一致。
@@ -648,7 +649,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.18';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.19';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -2632,6 +2633,9 @@ code block
     const pdfHead=new TextDecoder().decode(pdf.slice(0,80));
     const pdfText=new TextDecoder().decode(pdf.slice(0,Math.min(pdf.length,900)));
     add('PDF 結構可產生且內含影像物件', pdfHead.startsWith('%PDF-1.4') && /\/Subtype \/Image/.test(pdfText) && /%%EOF/.test(new TextDecoder().decode(pdf.slice(-40))), String(pdf.length));
+    const htmlExport=buildSingleFileHTML(toMarkdown(roots));
+    add('HTML 單檔匯出內容包含文件與目前版次', /^<!DOCTYPE html>/i.test(htmlExport) && htmlExport.includes("APP_VERSION = '"+APP_VERSION+"'"), htmlExport.slice(0,80));
+    add('HTML 單檔匯出會內嵌目前心智圖內容', htmlExport.includes('const DEFAULT_MARKDOWN = ') && htmlExport.includes('匯出自檢') && htmlExport.includes('分隔線'), 'embedded markdown');
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -3578,8 +3582,23 @@ function exportMd(){
   markSaved();
   showToast('Markdown 已匯出');
 }
+function buildSingleFileHTML(markdown){
+  const mdLiteral=JSON.stringify(markdown).replace(/<\/script/gi,'<\\/script');
+  const currentDefault=`const DEFAULT_MARKDOWN = ${mdLiteral};\nroots = parseMarkdown(DEFAULT_MARKDOWN);`;
+  let html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+  html=html.replace(/const DEFAULT_MARKDOWN = [\s\S]*?;\s*roots = parseMarkdown\(DEFAULT_MARKDOWN\);/, currentDefault);
+  return html;
+}
+function exportHTML(){
+  flushPendingMdText();
+  const generated=toMarkdown(roots);
+  const md=(originalMarkdownText!=null && generated===savedMarkdown) ? originalMarkdownText : generated;
+  const html=buildSingleFileHTML(md);
+  _dl(new Blob([html],{type:'text/html;charset=utf-8'}), _expName('html'));
+  showToast('HTML 單檔已匯出');
+}
 document.getElementById('btnExport').onclick=()=>exportMd();
-window.exportJPG=exportJPG; window.exportPDF=exportPDF;
+window.exportJPG=exportJPG; window.exportPDF=exportPDF; window.exportHTML=exportHTML;
 document.getElementById('btnNew').onclick=()=>{ flushPendingMdText(); if(!confirmReplace()) return; const r0=makeNode('中心主題'); roots=[r0];
   ['分支一','分支二','分支三'].forEach(t=>{ const c=makeNode(t); c.parent=r0; r0.children.push(c); });
   history.length=0; redoStack.length=0; selectOnly(r0); currentName=null; currentFileName=null; originalMarkdownText=null; savedMarkdown=null; clearSearch(); render(); fit(); };
@@ -3785,6 +3804,7 @@ function getCommandItems(){
     {label:'新建', hint:'檔案', aliases:'new blank', fn:clickBtn('btnNew')},
     {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:clickBtn('btnOpen')},
     {label:'匯出 Markdown', hint:'檔案', aliases:'save export md', fn:exportMd},
+    {label:'匯出 HTML 單檔', hint:'檔案', aliases:'html export single file offline backup', fn:exportHTML},
     {label:'匯出 JPG', hint:'檔案', aliases:'image export', fn:exportJPG},
     {label:'匯出 PDF', hint:'檔案', aliases:'pdf export', fn:exportPDF},
     {label:'搜尋節點', hint:'檢視', aliases:'find search', fn:openSearch},
@@ -3854,6 +3874,7 @@ function buildMainMenuItems(){
     {label:'✨ 新建', fn:clickBtn('btnNew')},
     {label:'📂 開啟 .md…', fn:()=>fileInput.click()},
     {label:'💾 匯出 .md', fn:exportMd},
+    {label:'🌐 匯出 HTML 單檔', fn:exportHTML},
     {label:'🖼 匯出 JPG', fn:exportJPG},
     {label:'📄 匯出 PDF(A4)', fn:exportPDF},
   ];
@@ -4363,7 +4384,7 @@ function runCommandPaletteSelfTest(options={}){
   try{
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
-    add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF'), commands.map(c=>c.label).join(','));
+    add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
     add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
@@ -4535,6 +4556,7 @@ Setext H2 寫法
 - 大型檔案保護:貼入很多行 Markdown 時,同步會自動放慢,避免每打一字就卡住
 ## 💾 匯出與檔案
 - 匯出 .md:右鍵 → 檔案 → 匯出(或 Ctrl+S),100% 原生 Markdown
+- 匯出 HTML 單檔:右鍵 → 檔案 → 匯出 HTML 單檔,可離線開啟完整工具
 - 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
@@ -4552,7 +4574,7 @@ Setext H2 寫法
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
 - 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、匯出、手機入口、分隔線位置、命令面板與完整流程
-- 匯出自檢:會確認分隔線、表格、JPG/PDF 結構都有被匯出
+- 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
 ### 編輯結構
 - Tab 子節點 · Enter 同層 · Shift+Tab 父節點
