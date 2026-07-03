@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.08
+  版次 Version : 10.09
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.09 整理固定直式版面:加大同層橫向間距與分隔線基準寬度,拖曳提示改成直式左/右語言並補自檢。
      2026-07-03  v10.08 取消橫式瀏覽/方向切換:固定直式版面,移除工具列、右鍵選單與命令面板中的方向切換入口,讓畫面更接近原始 Markdown 順序。
      2026-07-03  v10.07 集中管理偏好設定與命令面板:統一 localStorage key/helper,把命令搜尋改成可鍵盤操作的面板。
      2026-07-03  v10.06 整理右鍵選單層級:節點操作、分隔線、剪貼簿、檔案、檢視與診斷/自檢分群;範本補上新功能說明。
@@ -616,7 +617,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.08';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.09';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1330,8 +1331,9 @@ function toMarkdown(rootsArr){
 
 //===================== 版面配置(固定直式樹;保留橫式分支程式碼作舊版相容) =====================
 const HGAP = 54, VGAP = 14;       // 舊橫式相容:欄距 / 同層垂直間距
-const ROWGAP = 58, COLGAP = 26;   // 直式:列距 / 同層水平間距
+const ROWGAP = 62, COLGAP = 34;   // 直式:列距 / 同層水平間距
 const TRUNK_GAP = 28;             // 幹線(分支交點)距父節點的距離;連線與開關鈕共用
+const HR_MIN_WIDTH = 180;         // 固定直式下水平分隔線的基準寬度,避免短線太像裝飾點
 let orient = 'v';                 // 固定直式:主節點在上、分支往下,較接近原始 Markdown 順序
 
 function isBranchNode(n){ return !!n && n.kind!=='hr'; }
@@ -1643,7 +1645,7 @@ function render(){
   for(const it of list){
     const n=it.node;
     if(n.kind!=='hr') continue;
-    n._w=Math.max(120, n._w||0); n._textW=n._w;
+    n._w=Math.max(HR_MIN_WIDTH, n._w||0); n._textW=n._w;
     it.dom.style.width=n._w+'px';
   }
   // 2) 逐一根版面配置,再於跨軸方向堆疊,使多個中心不重疊
@@ -1691,7 +1693,7 @@ function render(){
     for(const it of g.list){
       const n=it.node;
       if(n.kind!=='hr') continue;
-      const w=Math.max(120, Math.ceil(groupRight - n._x));
+      const w=Math.max(HR_MIN_WIDTH, Math.ceil(groupRight - n._x));
       n._w=w; n._textW=w; it.dom.style.width=w+'px';
     }
   }
@@ -2923,6 +2925,13 @@ function dropTargetLabel(target){
   const raw=(target.title||target.note||'').split('\n')[0].trim();
   return raw ? raw.replace(/\s+/g,' ').slice(0,24) : '空白節點';
 }
+function dropHintText(mode, target, movers){
+  const name=dropTargetLabel(target);
+  if(mode==='into') return `移入「${name}」子節點`;
+  const side=mode==='before' ? '左側' : '右側';
+  if(draggingOnlyHr(movers||[])) return `水平線會放在「${name}」${side}`;
+  return `插入到「${name}」${side}`;
+}
 // 引導線:從預定父節點連到插入位置,並標出順序棒
 function drawGuide(mode, target){
   const tdom=canvas.querySelector(`.node[data-id="${target.id}"]`); if(!tdom){ clearGuide(); return; }
@@ -2968,8 +2977,8 @@ function drawGuide(mode, target){
     'drag guide svg');
   guideEl.style.display='block';
   const tr=tdom.getBoundingClientRect(), vr=viewport.getBoundingClientRect();
-  const name=dropTargetLabel(target);
-  dropHintEl.textContent=mode==='into' ? `移入「${name}」子節點` : `插入到「${name}」${mode==='before'?'前方':'後方'}`;
+  const movers=drag && (drag.movers||[drag.node]);
+  dropHintEl.textContent=dropHintText(mode, target, movers);
   dropHintEl.style.left=(tr.left-vr.left+tr.width/2)+'px'; dropHintEl.style.top=(tr.top-vr.top)+'px'; dropHintEl.style.display='block';
 }
 function clearGuide(){ clearTrustedHTML(guideEl); guideEl.style.display='none'; dropHintEl.style.display='none'; }
@@ -4006,7 +4015,11 @@ function runInteractionSelfTest(options={}){
     selected=roots[0].children[0]; selection=new Set([selected]);
     render();
     const first=roots[0].children[0], second=roots[0].children[1];
+    const sampleHr=makeHrNode();
     add('測試節點已渲染到畫布', !!canvas.querySelector(`.node[data-id="${first.id}"]`), first.id);
+    add('固定直式版面啟用', orient==='v' && ROWGAP>=60 && COLGAP>=34, `orient=${orient}, row=${ROWGAP}, col=${COLGAP}`);
+    add('直式拖曳提示使用左/右語言', /左側/.test(dropHintText('before', second, [first])) && /右側/.test(dropHintText('after', second, [first])), dropHintText('before', second, [first])+' / '+dropHintText('after', second, [first]));
+    add('分隔線拖曳提示使用水平線語言', /水平線.*左側/.test(dropHintText('before', second, [sampleHr])) && /水平線.*右側/.test(dropHintText('after', second, [sampleHr])), dropHintText('before', second, [sampleHr])+' / '+dropHintText('after', second, [sampleHr]));
     const before=insertHrNearNodeData(second, 'before');
     add('右鍵分隔線插入前方邏輯可用', before && roots[0].children[roots[0].children.indexOf(second)-1].kind==='hr', 'before second');
     const dragRule=runDragRuleSelfTest();
