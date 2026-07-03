@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.17
+  版次 Version : 10.18
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.18 整合左下資訊欄:把教學提示、目前狀態、短暫訊息與錯誤警告集中到左下同一欄位,移除底部中央提示的視覺占位。
      2026-07-03  v10.17 讓原始 Markdown 面板診斷可點擊跳轉:點擊提示會自動捲到問題行、移動游標並高亮該行,方便直接修正。
      2026-07-03  v10.16 強化原始 Markdown 面板狀態提示:新增常見語法問題行號診斷,可提示未閉合程式碼圍欄、HTML 註解/details 與表格欄數不一致。
      2026-07-03  v10.15 整理原始 Markdown 面板可讀性:加大行高與內距、強化目前行高亮,並補高亮對齊自檢。
@@ -256,8 +257,7 @@
   button.tb.primary:hover{filter:brightness(1.08);}
   button.tb small{opacity:.5;font-size:11px;margin-left:3px;}
   #iconpal{display:inline-flex;flex-wrap:nowrap;align-items:center;}
-  .hint{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);font-size:11.5px;color:#9aa5b1;
-    white-space:nowrap;background:rgba(255,255,255,.72);padding:4px 12px;border-radius:999px;z-index:40;pointer-events:none;}
+  .hint{display:none;}
   /* viewport */
   #viewport{position:relative;flex:1;overflow:hidden;cursor:grab;background-color:#f7f9fc;
     background-image:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='40'%20height='40'%3E%3Cg%20fill='none'%20stroke='%23c2ccd8'%20stroke-width='1'%20stroke-dasharray='4,4'%3E%3Cpath%20d='M0%200H40'/%3E%3Cpath%20d='M0%200V40'/%3E%3C/g%3E%3C/svg%3E");}
@@ -362,8 +362,16 @@
   #drop{position:absolute;inset:12px;border:3px dashed var(--accent);border-radius:16px;background:rgba(47,111,237,.06);
     display:none;align-items:center;justify-content:center;font-size:22px;color:var(--accent);z-index:50;pointer-events:none;}
   #drop.show{display:flex;}
-  #status{position:absolute;left:14px;bottom:14px;max-width:min(440px,42vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    font-size:12px;color:#7b8794;background:rgba(255,255,255,.85);padding:5px 10px;border-radius:7px;border:1px solid var(--line);}
+  #status{position:absolute;left:14px;right:214px;bottom:14px;min-height:34px;max-width:860px;overflow:hidden;
+    font-size:12px;color:#7b8794;background:rgba(255,255,255,.88);padding:6px 10px;border-radius:8px;border:1px solid var(--line);
+    display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;box-shadow:0 2px 8px rgba(20,40,80,.08);}
+  #status span{white-space:nowrap;}
+  #status .status-main{color:#64748b;font-weight:700;}
+  #status .status-help{color:#9aa5b1;}
+  #status .status-msg{font-weight:700;}
+  #status.info .status-msg{color:#2563eb;}
+  #status.warn .status-msg{color:#b45309;}
+  #status.error .status-msg{color:#b91c1c;}
   .zoombar{position:absolute;right:14px;bottom:14px;display:flex;gap:6px;background:var(--panel);
     border:1px solid var(--line);border-radius:9px;padding:5px;box-shadow:0 2px 8px rgba(0,0,0,.08);}
   .zoombar button{width:30px;height:30px;border:none;background:transparent;font-size:17px;cursor:pointer;border-radius:6px;color:var(--txt);}
@@ -371,7 +379,7 @@
   #zoomPct{min-width:48px;border:none;background:transparent;color:var(--txt);font:600 11px/30px system-ui,sans-serif;
     cursor:pointer;border-radius:6px;padding:0 5px;}
   #zoomPct:hover{background:var(--accent2);}
-  #toast{position:fixed;left:50%;bottom:96px;z-index:10000;pointer-events:none;opacity:0;
+  #toast{display:none;position:fixed;left:50%;bottom:96px;z-index:10000;pointer-events:none;opacity:0;
     transform:translate(-50%,10px);background:#172033;color:#fff;border-radius:9px;padding:8px 13px;
     font-size:12px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.24);
     transition:opacity .18s ease,transform .18s ease;}
@@ -422,6 +430,11 @@
   html.dark .ctxmenu{ background:var(--panel); }
   html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark #status{ background:rgba(20,23,28,.85); color:#aeb6c2; }
+  html.dark #status .status-main{ color:#cbd5e1; }
+  html.dark #status .status-help{ color:#8b94a3; }
+  html.dark #status.info .status-msg{ color:#93c5fd; }
+  html.dark #status.warn .status-msg{ color:#fbbf24; }
+  html.dark #status.error .status-msg{ color:#fca5a5; }
   html.dark .hint{ background:rgba(20,23,28,.6); color:#8b94a3; }
   html.dark #empty{ color:#8b94a3; }
   html.dark #empty b{ color:#aeb6c2; }
@@ -635,7 +648,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.17';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.18';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1594,6 +1607,35 @@ const statusEl = document.getElementById('status');
 const emptyEl = document.getElementById('empty');
 const toastEl = document.getElementById('toast');
 let toastTimer=null;
+const STATUS_HELP_TEXT='右鍵叫出選單(全部功能在這) · 雙擊編輯 · 拖節點換掛載/順序 · 滾輪縮放 · 拖背景平移 · Shift+滾輪水平捲動';
+let statusSummary='', statusMessage='', statusLevel='';
+function renderStatusBar(){
+  if(!statusEl) return;
+  statusEl.classList.toggle('info', statusLevel==='info');
+  statusEl.classList.toggle('warn', statusLevel==='warn');
+  statusEl.classList.toggle('error', statusLevel==='error');
+  clearTrustedHTML(statusEl);
+  const parts=[
+    ['status-main', statusSummary||'沒有內容'],
+    ['status-help', STATUS_HELP_TEXT],
+    ['status-msg', statusMessage]
+  ];
+  for(const [cls,text] of parts){
+    if(!text) continue;
+    const sp=document.createElement('span');
+    sp.className=cls;
+    sp.textContent=text;
+    statusEl.appendChild(sp);
+  }
+}
+function setStatusSummary(text){ statusSummary=String(text||''); renderStatusBar(); }
+function setStatusMessage(text, level='info', ttl=2600){
+  statusMessage=String(text||'');
+  statusLevel=level||'info';
+  renderStatusBar();
+  clearTimeout(toastTimer);
+  if(ttl>0) toastTimer=setTimeout(()=>{ statusMessage=''; statusLevel=''; renderStatusBar(); }, ttl);
+}
 let edgeFlowRaf=null, edgeFlowStart=0;
 function ensureEdgeFlow(){
   if(edgeFlowRaf) return;
@@ -1605,8 +1647,7 @@ function ensureEdgeFlow(){
   };
   edgeFlowRaf=requestAnimationFrame(step);
 }
-function showToast(msg){ if(!msg) return; toastEl.textContent=msg; toastEl.classList.add('show');
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>toastEl.classList.remove('show'),1800); }
+function showToast(msg){ if(!msg) return; toastEl.textContent=msg; setStatusMessage(msg,'info',2600); }
 
 function render(){
   rebuildRefDefsFromRoots();
@@ -1615,7 +1656,7 @@ function render(){
   // remove old node divs + toggles (keep svg)
   [...canvas.querySelectorAll('.node, .toggle')].forEach(e=>e.remove());
   clearTrustedHTML(svg);
-  if(!roots.length){ applyTransform(); statusEl.textContent=''; refreshMdPanel(mdTextDriven); refreshSaveState(); return; }
+  if(!roots.length){ applyTransform(); setStatusSummary('沒有內容'); refreshMdPanel(mdTextDriven); refreshSaveState(); return; }
   canvas.classList.toggle('vert', orient==='v');
   // 顏色純由 Vivid 配色即時套用(視覺辨識用,不存檔);新節點也會自動上色
   for(const r of roots) colorizeTheme(r, VIVID_THEME);
@@ -1878,10 +1919,10 @@ function render(){
   canvas._dx=dx; canvas._dy=dy;
   applyTransform();
   const centerCount = roots.filter(isBranchNode).length;
-  statusEl.textContent = (centerCount>1 ? `${centerCount} 個中心 · ` : '')
+  setStatusSummary((centerCount>1 ? `${centerCount} 個中心 · ` : '')
     + `節點 ${roots.reduce((s,r)=>s+countNodes(r),0)} 個`
     + (selection.size>1 ? ` · 已選 ${selection.size} 個`
-       : (selected? ` · 已選:「${(selected.title||'').split('\n')[0].slice(0,18)}」`:''));
+       : (selected? ` · 已選:「${(selected.title||'').split('\n')[0].slice(0,18)}」`:'')));
   refreshMdPanel(mdTextDriven);
   refreshSaveState();
 }
@@ -2492,11 +2533,11 @@ function showExportSize(kind, cv){
   const sf=cv._mmScaleFactor||1, w=cv.width, h=cv.height;
   showToast(`${kind} 已匯出 ${w}×${h}px / ${sf.toFixed(2)}x`);
 }
-async function exportJPG(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ statusEl.textContent='沒有可匯出的內容'; return; }
+async function exportJPG(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
   try{ if(cv.toBlob){ cv.toBlob(b=>{ b?_dl(b,_expName('jpg')):_dlData(cv.toDataURL('image/jpeg',0.92),_expName('jpg')); showExportSize('JPG', cv); },'image/jpeg',0.92); }
        else { _dlData(cv.toDataURL('image/jpeg',0.92),_expName('jpg')); showExportSize('JPG', cv); } }
-  catch(e){ logCaught(e,'export JPG'); statusEl.textContent='匯出 JPG 失敗:'+e.message; } }
-async function exportPDF(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ statusEl.textContent='沒有可匯出的內容'; return; }
+  catch(e){ logCaught(e,'export JPG'); setStatusMessage('匯出 JPG 失敗:'+e.message,'error',6000); } }
+async function exportPDF(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
   try{ const durl=cv.toDataURL('image/jpeg',0.92), b64=durl.split(',')[1], bin=atob(b64);
     const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
     const A4=[595.28,841.89]; const land=cv.width>cv.height;
@@ -2507,7 +2548,7 @@ async function exportPDF(){ await settleBeforeExport(); const cv=renderMapToCanv
     const pdf=_buildPdf(bytes, cv.width, cv.height, pageW, pageH, dx, dy, dw, dh);
     _dl(new Blob([pdf],{type:'application/pdf'}), _expName('pdf'));
     showExportSize('PDF', cv);
-  }catch(e){ logCaught(e,'export PDF'); statusEl.textContent='匯出 PDF 失敗:'+e.message; } }
+  }catch(e){ logCaught(e,'export PDF'); setStatusMessage('匯出 PDF 失敗:'+e.message,'error',6000); } }
 function _buildPdf(jpeg, pw, ph, pageW, pageH, dx, dy, dw, dh){
   const enc=new TextEncoder(); const chunks=[]; let len=0; const offs=[];
   const put=x=>{ const a=(typeof x==='string')?enc.encode(x):x; chunks.push(a); len+=a.length; };
@@ -2831,7 +2872,7 @@ async function pasteFromSystem(){
     if(!lines.length) return;
     snapshot(); const added=insertSameLevelAfter(selected, lines.map(l=>makeNode(l)));
     selection=new Set(added); selected=added[added.length-1]; render();
-  }catch(e){ logCaught(e,'read system clipboard'); statusEl.textContent='無法讀取系統剪貼簿(請先用本工具複製節點)'; }
+  }catch(e){ logCaught(e,'read system clipboard'); setStatusMessage('無法讀取系統剪貼簿(請先用本工具複製節點)','warn',5200); }
 }
 function pasteAny(){ if(clipboard&&clipboard.length) pasteClipboard(); else pasteFromSystem(); }
 function setAllCollapsed(val){ if(!roots.length) return; snapshot();
@@ -3512,7 +3553,7 @@ function refreshSaveState(){
 }
 function confirmReplace(){ return !hasUnsavedChanges() || confirm('目前內容尚未匯出保存,確定要放棄變更嗎?'); }
 function loadFile(file){
-  if(!/\.(md|markdown|txt)$/i.test(file.name||'')){ statusEl.textContent='只支援 .md、.markdown、.txt 檔案'; return; }
+  if(!/\.(md|markdown|txt)$/i.test(file.name||'')){ setStatusMessage('只支援 .md、.markdown、.txt 檔案','warn',4200); return; }
   flushPendingMdText();
   if(!confirmReplace()) return;
   const r=new FileReader();
@@ -3553,10 +3594,10 @@ const ICONS=['⭐','🔥','✅','❗','❓','💡','📌','🎯','👍','❤️'
 const LEAD_ICON_RE = new RegExp('^(' + ICONS.map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|') + ')\\s*');
 const iconpalEl=document.getElementById('iconpal');
 ICONS.forEach(ic=>{ const b=document.createElement('button'); b.className='tb iconbtn'; b.textContent=ic; b.title='加上 '+ic; b.onclick=()=>setIcon(ic); iconpalEl.appendChild(b); });
-function setIcon(ic){ if(!selection.size){ statusEl.textContent='請先點選節點,再加圖示'; return; } snapshot(); for(const n of selection) n.icon=ic; render(); }
+function setIcon(ic){ if(!selection.size){ setStatusMessage('請先點選節點,再加圖示','warn',3200); return; } snapshot(); for(const n of selection) n.icon=ic; render(); }
 // 行內格式:對選取節點整段標題加上/移除 **粗體** / *斜體* / ~~刪除線~~(切換)
 function toggleWrap(mk){
-  if(!selection.size){ statusEl.textContent='請先點選節點再套用樣式'; return; }
+  if(!selection.size){ setStatusMessage('請先點選節點再套用樣式','warn',3200); return; }
   snapshot();
   for(const n of selection){ const t=n.title||'';
     if(mk==='*'){ const isBold=/^\*\*[\s\S]+\*\*$/.test(t); const m=t.match(/^\*([\s\S]+)\*$/); n.title=(m && !isBold)?m[1]:'*'+t+'*'; }
@@ -3566,7 +3607,7 @@ function toggleWrap(mk){
 }
 // 連結:把選取節點包成 [文字](網址)(已是連結則換網址)
 function addLink(){
-  if(!selection.size){ statusEl.textContent='請先點選節點再加連結'; return; }
+  if(!selection.size){ setStatusMessage('請先點選節點再加連結','warn',3200); return; }
   const url = prompt('輸入連結網址(URL):', 'https://');
   if(!url) return;
   const safeUrl=safeLinkHref(url);
@@ -3577,9 +3618,9 @@ function addLink(){
   render(); showToast('已加入連結');
 }
 // 有序清單 / 引用:切換節點類型(兩者互斥)
-function toggleOrdered(){ if(!selection.size){ statusEl.textContent='請先點選節點'; return; } snapshot();
+function toggleOrdered(){ if(!selection.size){ setStatusMessage('請先點選節點','warn',3200); return; } snapshot();
   const add=[...selection].some(n=>!n.ordered); for(const n of selection){ if(add){ n.ordered=true; delete n.quote; } else delete n.ordered; } render(); }
-function toggleQuote(){ if(!selection.size){ statusEl.textContent='請先點選節點'; return; } snapshot();
+function toggleQuote(){ if(!selection.size){ setStatusMessage('請先點選節點','warn',3200); return; } snapshot();
   const add=[...selection].some(n=>!n.quote); for(const n of selection){ if(add){ n.quote=true; delete n.ordered; } else delete n.quote; } render(); }
 document.getElementById('btnBold').onclick=()=>toggleWrap('**');
 document.getElementById('btnItalic').onclick=()=>toggleWrap('*');
@@ -3589,7 +3630,7 @@ document.getElementById('btnOrdered').onclick=toggleOrdered;
 document.getElementById('btnQuote').onclick=toggleQuote;
 document.getElementById('btnClearIcon').onclick=()=>{ if(!selection.size) return; snapshot(); for(const n of selection){ delete n.icon; delete n.checked; } render(); };
 document.getElementById('btnTodo').onclick=()=>{
-  if(!selection.size){ statusEl.textContent='請先點選節點,再切換待辦'; return; }
+  if(!selection.size){ setStatusMessage('請先點選節點,再切換待辦','warn',3200); return; }
   snapshot();
   const addAny=[...selection].some(n=>n.checked===undefined);   // 有人沒方塊 → 全部加上;否則全部移除
   for(const n of selection){ if(addAny){ if(n.checked===undefined) n.checked=false; } else { delete n.checked; } }
@@ -4267,9 +4308,13 @@ function runInteractionSelfTest(options={}){
     const centerErrX=Math.abs((fitCalc.panX+12000*fitCalc.scale/2)-800);
     const centerErrY=Math.abs((fitCalc.panY+8000*fitCalc.scale/2)-450);
     add('置中縮放會把整張圖置於畫面中央', centerErrX<0.01 && centerErrY<0.01 && fitCalc.scale>=MIN_ZOOM_SCALE, `scale=${fitCalc.scale}, err=${centerErrX}/${centerErrY}`);
-    const hint=document.querySelector('.hint'), zoom=document.querySelector('.zoombar');
-    const hr=hint&&hint.getBoundingClientRect(), sr=statusEl&&statusEl.getBoundingClientRect(), zr=zoom&&zoom.getBoundingClientRect();
-    add('底部提示不重疊狀態列與縮放列', !overlap(hr,sr) && !overlap(hr,zr), `hint=${hr&&Math.round(hr.top)+'-'+Math.round(hr.bottom)}, status=${sr&&Math.round(sr.top)+'-'+Math.round(sr.bottom)}, zoom=${zr&&Math.round(zr.top)+'-'+Math.round(zr.bottom)}`);
+    setStatusMessage('測試訊息','info',0);
+    const statusText=statusEl.textContent||'';
+    const zoom=document.querySelector('.zoombar');
+    const sr=statusEl&&statusEl.getBoundingClientRect(), zr=zoom&&zoom.getBoundingClientRect();
+    add('左下資訊欄整合教學狀態與訊息', /節點/.test(statusText) && /右鍵叫出選單/.test(statusText) && /測試訊息/.test(statusText) && !overlap(sr,zr),
+      `status=${statusText}, status=${sr&&Math.round(sr.left)+'-'+Math.round(sr.right)}, zoom=${zr&&Math.round(zr.left)+'-'+Math.round(zr.right)}`);
+    setStatusMessage('', '', 0);
     svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
     const zmin=minZoomScale();
     add('大型圖縮放下限可低於 20% 且不小於安全下限', zmin>=MIN_ZOOM_SCALE && zmin<0.2, String(zmin));
