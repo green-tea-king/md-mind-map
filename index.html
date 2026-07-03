@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.13
+  版次 Version : 10.14
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.14 優化右鍵選單間距與分組密度:加寬選單、穩定列高、強化群組標題與分隔距離,提升功能掃讀性。
      2026-07-03  v10.13 整理畫面元素間距:底部狀態列、操作提示、縮放列與 Toast 分層排列,避免互相貼近或重疊。
      2026-07-03  v10.12 強化置中縮放:置中功能會把整張心智圖等比例塞進可視畫面中央,大圖不再只靠左上留邊。
      2026-07-03  v10.11 新增固定上下順序的分隔線位置自檢:確認不同層級的 --- 會落在原始 Markdown 前後同層節點之間。
@@ -378,15 +379,16 @@
   /* 所有功能整合到右鍵選單:隱藏功能工具列,僅保留左上 brand(版次) */
   .floatwin:not(#fwBrand){ display:none !important; }
   .ctxmenu{position:fixed;display:none;background:#fff;border:1px solid var(--line);border-radius:10px;
-    box-shadow:0 10px 30px rgba(20,40,80,.20);padding:5px;z-index:200;min-width:188px;max-height:92vh;overflow:auto;font-size:13px;}
+    box-shadow:0 10px 30px rgba(20,40,80,.20);padding:7px;z-index:200;min-width:218px;max-height:92vh;overflow:auto;font-size:13px;}
   .ctxmenu button{display:flex;width:100%;align-items:center;gap:8px;border:none;background:transparent;
-    padding:7px 11px;border-radius:7px;cursor:pointer;text-align:left;color:var(--txt);white-space:nowrap;font-family:inherit;}
+    min-height:32px;padding:7px 12px;border-radius:7px;cursor:pointer;text-align:left;color:var(--txt);white-space:nowrap;font-family:inherit;}
   .ctxmenu button:hover{background:var(--accent2);}
-  .ctxmenu button small{margin-left:auto;opacity:.55;font-size:11px;padding-left:14px;}
+  .ctxmenu button small{margin-left:auto;opacity:.58;font-size:11px;padding-left:18px;font-weight:700;}
   .ctxmenu button:disabled{opacity:.45;cursor:default;}
   .ctxmenu button:disabled:hover{background:transparent;}
-  .ctxmenu .mdiv{height:1px;background:var(--line);margin:4px 4px;}
-  .ctxmenu .ctxhdr{font-size:11px;opacity:.6;padding:4px 11px 2px;cursor:default;}
+  .ctxmenu .mdiv{height:1px;background:var(--line);margin:7px 6px;}
+  .ctxmenu .ctxhdr{font-size:11px;line-height:1.2;color:#7b8794;font-weight:800;letter-spacing:.04em;
+    text-transform:uppercase;padding:7px 12px 3px;cursor:default;}
   .cmdpal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;
     padding-top:min(14vh,110px);background:rgba(15,23,42,.22);z-index:10050;}
   .cmdpal.show{display:flex;}
@@ -621,7 +623,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.13';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.14';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -3581,6 +3583,7 @@ function hideCtx(){ ctxEl.style.display='none'; clearTrustedHTML(ctxEl); closeSu
 function renderMenu(container, items, level){
   for(const it of items){
     if(it==='—'){ const d=document.createElement('div'); d.className='mdiv'; container.appendChild(d); continue; }
+    if(it && it.header){ const h=document.createElement('div'); h.className='ctxhdr'; h.textContent=it.header; container.appendChild(h); continue; }
     const b=document.createElement('button');
     setTrustedHTML(b, it.sub ? `${escHtml(it.label)}<small>▸</small>` : (it.key ? `${escHtml(it.label)}<small>${escHtml(it.key)}</small>` : escHtml(it.label)), 'context menu item');
     if(it.disabled){ b.disabled=true; container.appendChild(b); continue; }
@@ -3781,10 +3784,12 @@ viewport.addEventListener('contextmenu', e=>{
       {label:'🗑 刪除', key:'Del', fn:deleteNode}
     ];
     items=[
+      {header:'編輯'},
       {label:'✏️ 編輯文字', key:'F2', fn:editSelected, disabled:multi},
       {label: node.note==null ? '💬 增加註解' : '💬 編輯註解', fn:()=>editNodeNote(node), disabled:multi},
       {label:'✕ 刪除註解', fn:()=>deleteNodeNote(node), disabled:multi || node.note==null},
       '—',
+      {header:'節點'},
       {label:'➕ 節點操作', sub:structureSub},
       {label:'─ 分隔線', sub:dividerSub},
       {label:'🅰 文字格式', sub:fmtSub},
@@ -3792,19 +3797,23 @@ viewport.addEventListener('contextmenu', e=>{
       {label:'⭐ 圖示', sub:iconSub},
       {label:'📋 剪貼簿', sub:clipSub},
       '—',
+      {header:'工具'},
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
       {label:'🧪 診斷/自檢', sub:diagSub},
     ];
   } else {
     items=[
+      {header:'畫布'},
       {label:'✨ 新增中心主題', fn:addRoot},
       {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
       '—',
+      {header:'工具'},
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
       {label:'🧪 診斷/自檢', sub:diagSub},
       '—',
+      {header:'展開'},
       {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
       {label:'▶ 全部收合', fn:()=>setAllCollapsed(true)},
     ];
@@ -3818,13 +3827,16 @@ if(mobileMenuBtn){
     const hasClip = !!(clipboard && clipboard.length);
     const {fileSub, viewSub, diagSub}=buildMainMenuItems();
     const items=[
+      {header:'畫布'},
       {label:'✨ 新增中心主題', fn:addRoot},
       {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
       '—',
+      {header:'工具'},
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
       {label:'🧪 診斷/自檢', sub:diagSub},
       '—',
+      {header:'展開'},
       {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
       {label:'▶ 全部收合', fn:()=>setAllCollapsed(true)},
     ];
@@ -4115,6 +4127,11 @@ function runInteractionSelfTest(options={}){
       const menuText=ctxEl.textContent||'';
       add('右鍵選單已移除子節點最前/最後分隔線項目', !/插入到子節點最前|插入到子節點最後/.test(menuText), menuText);
       add('右鍵選單已移除方向切換', !/切換方向|橫\/直/.test(menuText), menuText);
+      const headers=[...ctxEl.querySelectorAll('.ctxhdr')].map(h=>h.textContent.trim());
+      const menuBtn=ctxEl.querySelector('button:not(:disabled)');
+      const menuBtnH=menuBtn ? menuBtn.getBoundingClientRect().height : 0;
+      add('右鍵選單有清楚分組標題', ['編輯','節點','工具'].every(h=>headers.includes(h)), headers.join(','));
+      add('右鍵選單列高與寬度穩定', ctxEl.offsetWidth>=218 && menuBtnH>=32, `w=${ctxEl.offsetWidth}, row=${menuBtnH}`);
       hideCtx();
     } else add('右鍵選單已移除子節點最前/最後分隔線項目', false, 'missing node dom');
     render();
