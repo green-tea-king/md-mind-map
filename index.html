@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.30
+  版次 Version : 10.31
   最後更新 Updated: 2026-07-04
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.31 移除自動草稿功能:不再寫入 localStorage、不再啟動復原提示、不再離頁保存草稿,並移除草稿空間狀態與草稿自檢入口。
      2026-07-04  v10.30 重構自動草稿隔離:草稿升級為 v2 key、標記目前 origin、取消復原不刪草稿但不重複提示,並隔離舊 v1 草稿避免舊分頁反覆寫回。
      2026-07-04  v10.29 優化搜尋體驗:新增搜尋結果清單、找不到提示、結果點擊跳轉,並加入搜尋自檢與完整自檢。
      2026-07-04  v10.28 修正自動草稿復原提示反覆出現:取消復原時同步清除草稿,並新增 clearDraft=1 啟動清除入口。
@@ -406,18 +407,6 @@
     font-size:12px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.24);
     transition:opacity .18s ease,transform .18s ease;}
   #toast.show{opacity:1;transform:translate(-50%,0);}
-  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:12000;background:rgba(15,23,42,.28);padding:18px;}
-  .modal.show{display:flex;}
-  .modalbox{width:min(440px,calc(100vw - 28px));background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    box-shadow:0 18px 48px rgba(15,23,42,.28);overflow:hidden;}
-  .modalhead{padding:13px 15px;border-bottom:1px solid var(--line);font-size:15px;font-weight:800;color:var(--txt);}
-  .modalbody{padding:14px 15px;color:#475569;font-size:13px;line-height:1.55;}
-  .modalbody b{color:var(--txt);}
-  .modalmeta{margin-top:8px;padding:8px 10px;border-radius:8px;background:#f8fafc;color:#64748b;font-size:12px;word-break:break-all;}
-  .modalactions{display:flex;justify-content:flex-end;gap:8px;padding:12px 15px;border-top:1px solid var(--line);background:#f8fafc;}
-  .modalactions button{border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--txt);font-weight:700;padding:7px 11px;cursor:pointer;}
-  .modalactions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
-  .modalactions button.danger{color:#b91c1c;border-color:rgba(220,38,38,.38);}
   @media (prefers-reduced-motion:reduce){
     .node,#toast{transition:none !important;}
   }
@@ -491,9 +480,6 @@
   html.dark #searchBar button{ background:#2b313b; color:var(--txt); }
   html.dark #searchWrap{ background:var(--panel); }
   html.dark #searchHint{ background:#2b313b; color:#aeb6c2; }
-  html.dark .modalbody{ color:#cbd5e1; }
-  html.dark .modalmeta,html.dark .modalactions{ background:#2b313b; color:#aeb6c2; }
-  html.dark .modalactions button{ background:#3a414c; color:var(--txt); }
   html.dark .ctxmenu{ background:var(--panel); }
   html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark .report-head{ background:#2b313b; color:#cbd5e1; }
@@ -637,20 +623,6 @@
 </div>
 <div id="ctxmenu" class="ctxmenu"></div>
 <div id="toast" role="status" aria-live="polite"></div>
-<div id="draftModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="draftTitle">
-  <div class="modalbox">
-    <div id="draftTitle" class="modalhead">找到自動草稿</div>
-    <div class="modalbody">
-      <div>這份草稿只屬於目前網址空間。不同網址，例如 GitHub Pages 與 127.0.0.1，草稿不會互通。</div>
-      <div id="draftMeta" class="modalmeta"></div>
-    </div>
-    <div class="modalactions">
-      <button id="draftClear" class="danger">清除草稿</button>
-      <button id="draftDismiss">暫不復原</button>
-      <button id="draftRestore" class="primary">復原草稿</button>
-    </div>
-  </div>
-</div>
 <div id="selfTestReport" class="report-panel" role="dialog" aria-modal="false" aria-label="自檢報告">
   <div class="report-head">
     <div class="report-title">自檢報告</div>
@@ -750,7 +722,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.30';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.31';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -761,10 +733,7 @@ const STORAGE_KEYS=Object.freeze({
   markdownPanelWidth:'mm-mdw',
   floatingWindows:'mm-fwpos5',
   darkMode:'mm-dark',
-  nodeWrap:'mm-node-wrap',
-  autoDraft:'mm-auto-draft-v2',
-  autoDraftLegacy:'mm-auto-draft-v1',
-  autoDraftDismissed:'mm-auto-draft-dismissed-v1'
+  nodeWrap:'mm-node-wrap'
 });
 const PREF_KEYS=[
   STORAGE_KEYS.markdownPanelOpen,
@@ -973,7 +942,6 @@ function collectDiagnostics(){
     orientation:orient,
     scale:Number(scale.toFixed(3)),
     saveState:hasUnsavedChanges()?'dirty':'saved',
-    draft:autoDraftMeta(),
     performance:lastMarkdownPerformance,
     nodeWrap:getComputedStyle(document.documentElement).getPropertyValue('--node-wrap-width').trim(),
     storageKeys:Object.keys(STORAGE_KEYS),
@@ -1008,10 +976,6 @@ function collectDiagnostics(){
     searchExperienceSelfTestPassed:document.documentElement.dataset.searchExperienceSelfTestPassed||'',
     searchExperienceSelfTestFailed:document.documentElement.dataset.searchExperienceSelfTestFailed||'',
     searchExperienceSelfTestDetail:document.documentElement.dataset.searchExperienceSelfTestDetail||'',
-    autoDraftIsolationSelfTest:document.documentElement.dataset.autoDraftIsolationSelfTest||'',
-    autoDraftIsolationSelfTestPassed:document.documentElement.dataset.autoDraftIsolationSelfTestPassed||'',
-    autoDraftIsolationSelfTestFailed:document.documentElement.dataset.autoDraftIsolationSelfTestFailed||'',
-    autoDraftIsolationSelfTestDetail:document.documentElement.dataset.autoDraftIsolationSelfTestDetail||'',
     keyboardAccessibilitySelfTest:document.documentElement.dataset.keyboardAccessibilitySelfTest||'',
     keyboardAccessibilitySelfTestPassed:document.documentElement.dataset.keyboardAccessibilitySelfTestPassed||'',
     keyboardAccessibilitySelfTestFailed:document.documentElement.dataset.keyboardAccessibilitySelfTestFailed||'',
@@ -1751,7 +1715,6 @@ function renderStatusBar(){
   clearTrustedHTML(statusEl);
   const parts=[
     ['status-main', statusSummary||'沒有內容'],
-    ['status-help', `草稿空間:${location.host||location.origin}`],
     ['status-help', STATUS_HELP_TEXT],
     ['status-msg', statusMessage]
   ];
@@ -2726,9 +2689,8 @@ function _canvasBackgroundRgb(cv){
 function runExportSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
-  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
   try{
-    autoDraftEnabled=false;
     roots=parseMarkdown(`# 匯出自檢
 - **粗體**、*斜體*、~~刪除~~、[連結](https://example.com)
 ---
@@ -2785,7 +2747,6 @@ code block
     if(options.toast) showToast('匯出自檢執行失敗');
     return result;
   }finally{
-    autoDraftEnabled=savedDraftEnabled;
     roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
     roots.forEach(r=>setParents(r,null));
     selection=new Set();
@@ -3265,9 +3226,8 @@ window.runMindMapDragRuleSelfTest=runDragRuleSelfTest;
 function runHrPositionSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
-  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
   try{
-    autoDraftEnabled=false;
     roots=parseMarkdown(`# 分隔線位置自檢
 - 第一段
 ---
@@ -3317,7 +3277,6 @@ function runHrPositionSelfTest(options={}){
     if(options.toast) showToast('分隔線位置自檢執行失敗');
     return result;
   }finally{
-    autoDraftEnabled=savedDraftEnabled;
     roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
     roots.forEach(r=>setParents(r,null));
     selection=new Set();
@@ -3688,173 +3647,6 @@ const fileInput=document.getElementById('file');
 document.getElementById('btnOpen').onclick=()=>fileInput.click();
 fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); fileInput.value=''; };
 let savedMarkdown=null;
-const AUTO_DRAFT_KEY=STORAGE_KEYS.autoDraft;
-const AUTO_DRAFT_LEGACY_KEY=STORAGE_KEYS.autoDraftLegacy;
-const AUTO_DRAFT_DISMISSED_KEY=STORAGE_KEYS.autoDraftDismissed;
-let autoDraftTimer=null, autoDraftEnabled=false, lastDraftMarkdown='', preservedAutoDraftHash='';
-const draftModalEl=document.getElementById('draftModal');
-const draftMetaEl=document.getElementById('draftMeta');
-const draftRestoreEl=document.getElementById('draftRestore');
-const draftDismissEl=document.getElementById('draftDismiss');
-const draftClearEl=document.getElementById('draftClear');
-function hashText(text){
-  text=String(text||'');
-  let h=2166136261;
-  for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619); }
-  return (h>>>0).toString(36);
-}
-function autoDraftMeta(){
-  const d=storageJsonGet(AUTO_DRAFT_KEY, null, 'read auto draft');
-  const legacy=storageJsonGet(AUTO_DRAFT_LEGACY_KEY, null, 'read legacy auto draft');
-  if(!d) return {exists:false, origin:location.origin, legacyExists:!!(legacy&&legacy.markdown)};
-  return {
-    exists:!!d.markdown,
-    updatedAt:d.updatedAt||'',
-    fileName:d.currentFileName||'',
-    chars:String(d.markdown||'').length,
-    origin:d.origin||location.origin,
-    contentHash:d.contentHash||hashText(d.markdown||''),
-    legacyExists:!!(legacy&&legacy.markdown)
-  };
-}
-function clearAutoDraft(){
-  clearTimeout(autoDraftTimer); autoDraftTimer=null; lastDraftMarkdown=''; preservedAutoDraftHash='';
-  storageRemove(AUTO_DRAFT_KEY, 'clear auto draft');
-  storageRemove(AUTO_DRAFT_LEGACY_KEY, 'clear legacy auto draft');
-  storageRemove(AUTO_DRAFT_DISMISSED_KEY, 'clear dismissed auto draft');
-}
-function consumeAutoDraftClearRequest(){
-  try{
-    const url=new URL(location.href);
-    if(!url.searchParams.has('clearDraft')) return false;
-    clearAutoDraft();
-    url.searchParams.delete('clearDraft');
-    history.replaceState(null, '', url.pathname + url.search + url.hash);
-    setStatusMessage('已清除自動草稿','ok',2600);
-    return true;
-  }catch(e){ logCaught(e,'consume auto draft clear request'); return false; }
-}
-function scheduleAutoDraft(markdown){
-  if(!autoDraftEnabled) return;
-  markdown=String(markdown||'');
-  clearTimeout(autoDraftTimer);
-  autoDraftTimer=setTimeout(()=>saveAutoDraft(markdown),650);
-}
-function saveAutoDraft(markdown){
-  clearTimeout(autoDraftTimer); autoDraftTimer=null;
-  if(!autoDraftEnabled || !roots.length) return;
-  markdown=String(markdown||toMarkdown(roots));
-  if(!markdown || markdown===savedMarkdown){ clearAutoDraft(); return; }
-  if(markdown===lastDraftMarkdown) return;
-  const contentHash=hashText(markdown);
-  const baseHash=hashText(savedMarkdown||'');
-  if(preservedAutoDraftHash && preservedAutoDraftHash!==contentHash){
-    preservedAutoDraftHash='';
-    storageRemove(AUTO_DRAFT_DISMISSED_KEY, 'clear stale dismissed auto draft');
-  }
-  const payload={
-    app:'MD心智圖',
-    draftFormat:2,
-    draftId:`${location.origin}|${contentHash}`,
-    origin:location.origin,
-    version:APP_VERSION,
-    updatedAt:new Date().toISOString(),
-    markdown,
-    savedMarkdown:savedMarkdown||'',
-    contentHash,
-    baseHash,
-    currentName:currentName||null,
-    currentFileName:currentFileName||null,
-    originalMarkdownText:originalMarkdownText||null
-  };
-  if(storageJsonSet(AUTO_DRAFT_KEY, payload, 'save auto draft')) lastDraftMarkdown=markdown;
-}
-function hideDraftModal(){ if(draftModalEl) draftModalEl.classList.remove('show'); }
-function applyAutoDraftPayload(d){
-  roots=parseMarkdown(d.markdown);
-  currentName=d.currentName||null;
-  currentFileName=d.currentFileName||null;
-  originalMarkdownText=d.originalMarkdownText||null;
-  savedMarkdown=d.savedMarkdown||'';
-  history.length=0; redoStack.length=0; clearSearch();
-  selectOnly(roots[0]||null);
-  lastDraftMarkdown=d.markdown;
-  preservedAutoDraftHash='';
-  storageRemove(AUTO_DRAFT_DISMISSED_KEY, 'clear dismissed restored auto draft');
-  render(); fit(); refreshSaveState();
-}
-function showAutoDraftModal(d, contentHash){
-  if(!draftModalEl || !draftMetaEl || !draftRestoreEl || !draftDismissEl || !draftClearEl) return false;
-  const when=d.updatedAt ? new Date(d.updatedAt).toLocaleString() : '未知時間';
-  const name=d.currentFileName ? `「${d.currentFileName}」` : '未命名檔案';
-  draftMetaEl.textContent=`網址:${d.origin||location.origin} · 來源:${name} · 時間:${when}`;
-  draftModalEl.classList.add('show');
-  preservedAutoDraftHash=contentHash;
-  draftRestoreEl.onclick=()=>{ hideDraftModal(); try{ applyAutoDraftPayload(d); setStatusMessage('已復原自動草稿','ok',3200); }catch(e){ logCaught(e,'apply auto draft'); setStatusMessage('復原自動草稿失敗','error',5200); } };
-  draftDismissEl.onclick=()=>{ hideDraftModal(); storageJsonSet(AUTO_DRAFT_DISMISSED_KEY, {contentHash, dismissedAt:new Date().toISOString(), origin:location.origin}, 'dismiss auto draft'); preservedAutoDraftHash=contentHash; setStatusMessage('已暫不復原自動草稿;草稿仍保留在目前網址空間','info',4200); refreshSaveState(); };
-  draftClearEl.onclick=()=>{ hideDraftModal(); clearAutoDraft(); setStatusMessage('已清除目前網址空間的自動草稿','ok',3200); refreshSaveState(); };
-  return true;
-}
-function restoreAutoDraftIfWanted(){
-  try{
-    const d=storageJsonGet(AUTO_DRAFT_KEY, null, 'read auto draft');
-    if(!d) return false;
-    if(!d || !d.markdown) return false;
-    const contentHash=d.contentHash||hashText(d.markdown);
-    const dismissed=storageJsonGet(AUTO_DRAFT_DISMISSED_KEY, null, 'read dismissed auto draft');
-    if(dismissed && dismissed.contentHash===contentHash){ preservedAutoDraftHash=contentHash; return false; }
-    showAutoDraftModal(d, contentHash);
-    return false;
-  }catch(e){ logCaught(e,'restore auto draft'); return false; }
-}
-function runAutoDraftIsolationSelfTest(options={}){
-  const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
-  const oldV2=storageGet(AUTO_DRAFT_KEY, null, 'backup auto draft v2');
-  const oldV1=storageGet(AUTO_DRAFT_LEGACY_KEY, null, 'backup auto draft v1');
-  const oldDismissed=storageGet(AUTO_DRAFT_DISMISSED_KEY, null, 'backup dismissed auto draft');
-  const savedRoots=roots, savedSavedMarkdown=savedMarkdown, savedDraftEnabled=autoDraftEnabled, savedLastDraft=lastDraftMarkdown, savedPreservedDraftHash=preservedAutoDraftHash;
-  try{
-    storageRemove(AUTO_DRAFT_KEY, 'test clear v2');
-    storageRemove(AUTO_DRAFT_LEGACY_KEY, 'test clear v1');
-    storageRemove(AUTO_DRAFT_DISMISSED_KEY, 'test clear dismissed');
-    roots=parseMarkdown('# 草稿自檢\n- 已修改\n');
-    savedMarkdown='# 草稿自檢\n';
-    autoDraftEnabled=true; lastDraftMarkdown='';
-    saveAutoDraft(toMarkdown(roots));
-    const d=storageJsonGet(AUTO_DRAFT_KEY, null, 'read test auto draft');
-    add('自動草稿使用 v2 key 與格式', !!(d&&d.draftFormat===2&&d.markdown), d&&JSON.stringify({key:AUTO_DRAFT_KEY, format:d.draftFormat}));
-    add('自動草稿標記目前網址 origin', !!(d&&d.origin===location.origin&&String(d.draftId||'').includes(location.origin)), d&&`${d.origin}/${d.draftId}`);
-    add('自動草稿寫入內容 hash 與基準 hash', !!(d&&d.contentHash===hashText(d.markdown)&&d.baseHash===hashText(savedMarkdown)), d&&`${d.contentHash}/${d.baseHash}`);
-    storageJsonSet(AUTO_DRAFT_LEGACY_KEY, {markdown:'# 舊草稿\n', updatedAt:new Date().toISOString()}, 'write legacy draft fixture');
-    const meta=autoDraftMeta();
-    add('舊 v1 草稿只列為 legacy 狀態', meta.exists===true && meta.legacyExists===true && meta.origin===location.origin, JSON.stringify(meta));
-    storageJsonSet(AUTO_DRAFT_DISMISSED_KEY, {contentHash:d.contentHash, dismissedAt:new Date().toISOString(), origin:location.origin}, 'dismiss test draft');
-    const restored=restoreAutoDraftIfWanted();
-    add('已暫不復原的同內容草稿不再跳復原流程', restored===false, String(restored));
-    clearAutoDraft();
-    add('清除草稿會移除目前 origin 的 v2/v1/dismissed key',
-      storageGet(AUTO_DRAFT_KEY,null,'check v2')==null && storageGet(AUTO_DRAFT_LEGACY_KEY,null,'check v1')==null && storageGet(AUTO_DRAFT_DISMISSED_KEY,null,'check dismissed')==null,
-      'cleared');
-    const failed=checks.filter(c=>!c.ok);
-    const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
-    if(options.log) console.table(checks);
-    if(options.toast) showToast(result.ok ? `自動草稿隔離自檢通過:${result.passed}/${checks.length}` : `自動草稿隔離自檢失敗:${failed.length} 項`);
-    return result;
-  }catch(e){
-    logCaught(e,'auto draft isolation self test');
-    const result={ok:false, passed:0, failed:1, checks:[{name:'自動草稿隔離自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
-    if(options.toast) showToast('自動草稿隔離自檢執行失敗');
-    return result;
-  }finally{
-    if(oldV2==null) storageRemove(AUTO_DRAFT_KEY, 'restore v2 missing'); else storageSet(AUTO_DRAFT_KEY, oldV2, 'restore v2');
-    if(oldV1==null) storageRemove(AUTO_DRAFT_LEGACY_KEY, 'restore v1 missing'); else storageSet(AUTO_DRAFT_LEGACY_KEY, oldV1, 'restore v1');
-    if(oldDismissed==null) storageRemove(AUTO_DRAFT_DISMISSED_KEY, 'restore dismissed missing'); else storageSet(AUTO_DRAFT_DISMISSED_KEY, oldDismissed, 'restore dismissed');
-    hideDraftModal();
-    roots=savedRoots; savedMarkdown=savedSavedMarkdown; autoDraftEnabled=savedDraftEnabled; lastDraftMarkdown=savedLastDraft; preservedAutoDraftHash=savedPreservedDraftHash;
-    roots.forEach(r=>setParents(r,null));
-  }
-}
-window.runAutoDraftIsolationSelfTest=runAutoDraftIsolationSelfTest;
 function markSaved(){ savedMarkdown=roots.length ? toMarkdown(roots) : ''; refreshSaveState(); }
 function hasUnsavedChanges(){
   if(savedMarkdown==null && !roots.length) return false;
@@ -3867,12 +3659,7 @@ function refreshSaveState(){
   saveStateEl.textContent=dirty ? '未匯出' : '已匯出';
   saveStateEl.classList.toggle('dirty', dirty);
   saveStateEl.classList.toggle('saved', !dirty);
-  saveStateEl.title=dirty ? '目前內容尚未匯出 Markdown,已自動保留復原草稿' : '目前內容已匯出或未變更';
-  if(dirty) scheduleAutoDraft(current);
-  else if(autoDraftEnabled){
-    const meta=autoDraftMeta();
-    if(!(meta.exists && meta.contentHash && meta.contentHash===preservedAutoDraftHash)) clearAutoDraft();
-  }
+  saveStateEl.title=dirty ? '目前內容尚未匯出 Markdown,離開前請手動匯出保存' : '目前內容已匯出或未變更';
 }
 function confirmReplace(){ return !hasUnsavedChanges() || confirm('目前內容尚未匯出保存,確定要放棄變更嗎?'); }
 function loadFile(file){
@@ -4197,7 +3984,6 @@ function getCommandItems(){
     {label:'命令面板自檢', hint:'診斷', aliases:'test command palette', fn:()=>runCommandPaletteSelfTest({toast:true,log:true})},
     {label:'右鍵選單自檢', hint:'診斷', aliases:'test context menu accessibility aria keyboard', fn:()=>runContextMenuAccessibilitySelfTest({toast:true,log:true})},
     {label:'搜尋體驗自檢', hint:'診斷', aliases:'test search results find', fn:()=>runSearchExperienceSelfTest({toast:true,log:true})},
-    {label:'自動草稿隔離自檢', hint:'診斷', aliases:'test auto draft origin localStorage', fn:()=>runAutoDraftIsolationSelfTest({toast:true,log:true})},
     {label:'鍵盤操作自檢', hint:'診斷', aliases:'test keyboard accessibility focus escape aria', fn:()=>runKeyboardAccessibilitySelfTest({toast:true,log:true})},
     {label:'完整自檢', hint:'診斷', aliases:'test full', fn:()=>runMindMapFullSelfTest({toast:true,log:true})},
     {label:'複製診斷資訊', hint:'診斷', aliases:'diagnostics copy', fn:copyDiagnostics}
@@ -4283,7 +4069,6 @@ function buildMainMenuItems(){
     {label:'✅ 執行命令面板自檢', fn:()=>runCommandPaletteSelfTest({toast:true, log:true})},
     {label:'✅ 執行右鍵選單自檢', fn:()=>runContextMenuAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行搜尋體驗自檢', fn:()=>runSearchExperienceSelfTest({toast:true, log:true})},
-    {label:'✅ 執行自動草稿隔離自檢', fn:()=>runAutoDraftIsolationSelfTest({toast:true, log:true})},
     {label:'✅ 執行鍵盤操作自檢', fn:()=>runKeyboardAccessibilitySelfTest({toast:true, log:true})},
     {label:'✅ 執行完整自檢', fn:()=>runMindMapFullSelfTest({toast:true, log:true})},
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
@@ -4435,7 +4220,7 @@ viewport.addEventListener('drop',e=>{ e.preventDefault(); dropEl.classList.remov
   const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
 window.addEventListener('beforeunload', e=>{
   flushPendingMdText();
-  if(hasUnsavedChanges()){ saveAutoDraft(); e.preventDefault(); e.returnValue=''; }
+  if(hasUnsavedChanges()){ e.preventDefault(); e.returnValue=''; }
 });
 
 //===================== 浮動工具視窗(拖曳 / 收合 / 記憶位置) =====================
@@ -4703,9 +4488,8 @@ function runInteractionSelfTest(options={}){
   const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
   const overlap=(a,b)=>!!(a&&b&&a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top);
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
-  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient, savedDraftEnabled=autoDraftEnabled;
+  const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
   try{
-    autoDraftEnabled=false;
     roots=parseMarkdown('# 互動測試\n- 第一個節點\n- 第二個節點\n');
     setParents(roots[0], null);
     selected=roots[0].children[0]; selection=new Set([selected]);
@@ -4783,7 +4567,6 @@ function runInteractionSelfTest(options={}){
     if(options.toast) showToast('完整自檢執行失敗');
     return result;
   }finally{
-    autoDraftEnabled=savedDraftEnabled;
     roots=savedRoots;
     scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
     roots.forEach(r=>setParents(r,null));
@@ -4806,7 +4589,6 @@ function runMindMapFullSelfTest(options={}){
     {name:'命令面板', result:runCommandPaletteSelfTest({toast:false, log:options.log})},
     {name:'右鍵選單', result:runContextMenuAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'搜尋體驗', result:runSearchExperienceSelfTest({toast:false, log:options.log})},
-    {name:'自動草稿隔離', result:runAutoDraftIsolationSelfTest({toast:false, log:options.log})},
     {name:'鍵盤操作', result:runKeyboardAccessibilitySelfTest({toast:false, log:options.log})},
     {name:'互動流程', result:runInteractionSelfTest({toast:false, log:options.log})}
   ];
@@ -4915,7 +4697,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='自動草稿隔離自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -5245,7 +5027,7 @@ Setext H2 寫法
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
-- 草稿復原:如果有未匯出的變更就離開,下次開啟同一個網址空間會詢問是否復原;GitHub Pages 與 127.0.0.1 是不同草稿空間
+- 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,未匯出時瀏覽器會提示確認離開
 ## 🎨 配色
 - 固定使用活力分支 Vivid 配色,不提供主題切換
 - 顏色只是畫面視覺辨識,不會寫進 .md;載入時自動上色
@@ -5257,7 +5039,7 @@ Setext H2 寫法
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 手機入口:小螢幕左下角「☰ 操作」可開啟主要功能,不用靠長按找選單
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、右鍵選單、搜尋體驗、自動草稿隔離、鍵盤操作與完整流程
+- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、手機入口、分隔線位置、命令面板、右鍵選單、搜尋體驗、鍵盤操作與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
@@ -5328,11 +5110,6 @@ document.documentElement.dataset.searchExperienceSelfTest=searchExperienceSelfTe
 document.documentElement.dataset.searchExperienceSelfTestPassed=String(searchExperienceSelfTestResult.passed);
 document.documentElement.dataset.searchExperienceSelfTestFailed=String(searchExperienceSelfTestResult.failed);
 document.documentElement.dataset.searchExperienceSelfTestDetail=searchExperienceSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
-const autoDraftIsolationSelfTestResult=runAutoDraftIsolationSelfTest({toast:false});
-document.documentElement.dataset.autoDraftIsolationSelfTest=autoDraftIsolationSelfTestResult.ok?'pass':'fail';
-document.documentElement.dataset.autoDraftIsolationSelfTestPassed=String(autoDraftIsolationSelfTestResult.passed);
-document.documentElement.dataset.autoDraftIsolationSelfTestFailed=String(autoDraftIsolationSelfTestResult.failed);
-document.documentElement.dataset.autoDraftIsolationSelfTestDetail=autoDraftIsolationSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
 document.documentElement.dataset.keyboardAccessibilitySelfTest='manual';
 document.documentElement.dataset.keyboardAccessibilitySelfTestPassed='0';
 document.documentElement.dataset.keyboardAccessibilitySelfTestFailed='0';
@@ -5342,13 +5119,8 @@ document.documentElement.dataset.interactionSelfTest=interactionSelfTestResult.o
 document.documentElement.dataset.interactionSelfTestPassed=String(interactionSelfTestResult.passed);
 document.documentElement.dataset.interactionSelfTestFailed=String(interactionSelfTestResult.failed);
 document.documentElement.dataset.interactionSelfTestDetail=interactionSelfTestResult.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
-const clearedAutoDraft=consumeAutoDraftClearRequest();
-const restoredAutoDraft=clearedAutoDraft ? false : restoreAutoDraftIfWanted();
-if(!restoredAutoDraft){
-  selectOnly(roots[0]);
-  markSaved();
-}
-autoDraftEnabled=true;
+selectOnly(roots[0]);
+markSaved();
 render(); fit();   // 顏色由 render() 依目前主題即時套用(預設 Vivid)
 // 字體載入完成後,節點寬度會變化;重算一次版面,避免連接線與節點邊緣對不齊(出現空隙)
 if(document.fonts && document.fonts.ready){ document.fonts.ready.then(()=>{ try{ const a=selected; renderKeepingAnchor(a); }catch(e){ logCaught(e,'font-ready anchor render'); try{ render(); }catch(_){ logCaught(_,'font-ready fallback render'); } } }); }
