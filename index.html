@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.15
+  版次 Version : 10.16
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.16 強化原始 Markdown 面板狀態提示:新增常見語法問題行號診斷,可提示未閉合程式碼圍欄、HTML 註解/details 與表格欄數不一致。
      2026-07-03  v10.15 整理原始 Markdown 面板可讀性:加大行高與內距、強化目前行高亮,並補高亮對齊自檢。
      2026-07-03  v10.14 優化右鍵選單間距與分組密度:加寬選單、穩定列高、強化群組標題與分隔距離,提升功能掃讀性。
      2026-07-03  v10.13 整理畫面元素間距:底部狀態列、操作提示、縮放列與 Toast 分層排列,避免互相貼近或重疊。
@@ -448,6 +449,8 @@
   #mdInfo{ padding:7px 12px; font-size:11px; line-height:1.35; color:#8f9aa8; border-top:1px solid var(--line);
     user-select:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
   #mdInfo span{ white-space:nowrap; }
+  #mdInfo.warn{ color:#b45309; background:rgba(245,158,11,.10); }
+  #mdInfo.error{ color:#b91c1c; background:rgba(239,68,68,.10); }
   #mdTab{ position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:149; background:var(--accent);
     color:#fff; border:none; cursor:pointer; writing-mode:vertical-rl; padding:14px 6px; border-radius:9px 0 0 9px;
     font-size:12px; font-weight:700; letter-spacing:2px; box-shadow:-2px 2px 10px rgba(20,40,80,.18); }
@@ -471,6 +474,8 @@
   html.dark #mdHead button{ color:#aeb6c2; }
   html.dark #mdHead button:hover{ background:rgba(255,255,255,.12); }
   html.dark #mdHi{ background:rgba(110,160,255,.16); border-color:rgba(110,160,255,.38); border-left-color:#6ea0ff; }
+  html.dark #mdInfo.warn{ color:#fbbf24; background:rgba(245,158,11,.13); }
+  html.dark #mdInfo.error{ color:#fca5a5; background:rgba(239,68,68,.13); }
   /* ===== Markdown 表格(節點內以真正的表格呈現)===== */
   .node.tablenode{ max-width:920px; }
   .node .ntext.hastable{ display:block; white-space:normal; }
@@ -627,7 +632,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.15';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.16';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1026,6 +1031,44 @@ function tableHtml(tbl){
     h+='</tbody>'; }
   h+='</table>'; return h;
 }
+function analyzeMarkdownPanelText(text){
+  const lines=String(text||'').replace(/\r/g,'').split('\n');
+  const issues=[];
+  const push=(line, level, message)=>issues.push({line:Math.max(1,line+1), level, message});
+  let fence=null, htmlComment=null, details=null;
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    const fm=line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if(fm){
+      if(!fence) fence={line:i, mark:fm[1][0], len:fm[1].length};
+      else if(fm[1][0]===fence.mark && fm[1].length>=fence.len) fence=null;
+      continue;
+    }
+    if(fence) continue;
+    if(htmlComment==null && /^\s{0,3}<!--/.test(line) && !/-->/.test(line)) htmlComment=i;
+    if(htmlComment!=null && i!==htmlComment && /-->/.test(line)) htmlComment=null;
+    if(details==null && /^\s{0,3}<details(?:\s|>)/i.test(line) && !/<\/details>/i.test(line)) details=i;
+    if(details!=null && i!==details && /<\/details>/i.test(line)) details=null;
+    if(line.indexOf('|')>=0 && i+1<lines.length && isTableDelimRow(lines[i+1])){
+      const cols=splitTableRow(line).length, delim=splitTableRow(lines[i+1]).length;
+      if(cols!==delim) push(i+1, 'error', `表格分隔列欄數 ${delim} 欄,但表頭是 ${cols} 欄`);
+      else {
+        for(let j=i+2;j<lines.length;j++){
+          const row=lines[j];
+          if(row.trim()==='' || row.indexOf('|')<0) break;
+          const cells=splitTableRow(row).length;
+          if(cells!==cols){ push(j, 'warn', `表格資料列有 ${cells} 欄,表頭是 ${cols} 欄`); break; }
+        }
+      }
+    }
+  }
+  if(fence) push(fence.line, 'error', `程式碼區塊少了結尾 ${fence.mark.repeat(fence.len)}`);
+  if(htmlComment!=null) push(htmlComment, 'error', 'HTML 註解少了結尾 -->');
+  if(details!=null) push(details, 'warn', '<details> 少了結尾 </details>');
+  issues.sort((a,b)=>a.line-b.line || (a.level==='error'?-1:1));
+  return {ok:!issues.some(i=>i.level==='error'), issues};
+}
+window.analyzeMarkdownPanelText=analyzeMarkdownPanelText;
 function htmlBlockTag(line){
   const m=String(line||'').match(/^\s{0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|>|\/>)/);
   if(!m) return null;
@@ -2014,6 +2057,28 @@ function rebuildLineMapFromRoots(){
     if(mdLineToId[nd._srcLine]==null) mdLineToId[nd._srcLine]=nd.id;
     if(mdIdToLine[nd.id]==null) mdIdToLine[nd.id]=nd._srcLine; } walk(nd.children); } })(roots);
 }
+function setMdInfo(parts, level){
+  if(!mdInfoEl) return;
+  mdInfoEl.classList.toggle('warn', level==='warn');
+  mdInfoEl.classList.toggle('error', level==='error');
+  clearTrustedHTML(mdInfoEl);
+  for(const part of parts.filter(Boolean)){
+    const sp=document.createElement('span');
+    sp.textContent=part;
+    mdInfoEl.appendChild(sp);
+  }
+}
+function updateMdInfo(panelText, nodeCount, perf){
+  const diag=analyzeMarkdownPanelText(panelText);
+  if(diag.issues.length){
+    const top=diag.issues[0];
+    setMdInfo([top.level==='error'?'Markdown 需要檢查':'Markdown 提醒', `第 ${top.line} 行`, top.message, diag.issues.length>1?`另有 ${diag.issues.length-1} 項`:'' ], top.level);
+    return diag;
+  }
+  const label=markdownPerformanceLabel(perf);
+  setMdInfo(['雙向同步', `${mdLineToId.length} 行`, `${nodeCount} 節點`, label], '');
+  return diag;
+}
 function refreshMdPanel(fromText){
   if(!mdPanelOpen) return;
   if(mdInputTimer) return;   // 使用者仍在輸入時不回寫 textarea,避免舊計時器完成前文字被其他 render 覆蓋
@@ -2030,8 +2095,7 @@ function refreshMdPanel(fromText){
     const c=roots.reduce((s,r)=>s+countNodes(r),0);
     const stats=markdownPerfStats(panelText);
     const perf=updateMarkdownPerformance(stats, c, lastMarkdownPerformance.parseMs, lastMarkdownPerformance.renderMs, markdownCommitDelay(panelText));
-    const label=markdownPerformanceLabel(perf);
-    mdInfoEl.textContent='雙向同步 · '+mdLineToId.length+' 行 · '+c+' 節點'+(label?' · '+label:'');
+    updateMdInfo(panelText, c, perf);
   }
 }
 function setActiveMdLine(line){
@@ -2066,7 +2130,12 @@ function commitMdText(){
   const text=mdTextEl.value; const curLine=lineAt(mdTextEl.selectionStart);
   const stats=markdownPerfStats(text);
   const t0=performance.now();
-  roots=parseMarkdown(text);
+  try{ roots=parseMarkdown(text); }
+  catch(e){
+    logCaught(e,'commit markdown text');
+    setMdInfo(['Markdown 解析失敗', e&&e.message ? String(e.message) : '請檢查原始 Markdown'], 'error');
+    return;
+  }
   const t1=performance.now();
   mdTextDriven=true; render(); mdTextDriven=false;
   const t2=performance.now();
@@ -2074,8 +2143,7 @@ function commitMdText(){
   const id=mdLineToId[curLine]; const n=id?findByIdAll(id):null;
   if(n){ selectOnly(n); refreshSelectionDom(); }
   setActiveMdLine(curLine);
-  const label=markdownPerformanceLabel(perf);
-  if(label && mdInfoEl) mdInfoEl.textContent='雙向同步 · '+mdLineToId.length+' 行 · '+perf.nodes+' 節點 · '+label;
+  updateMdInfo(text, perf.nodes, perf);
 }
 function scheduleMdCommit(){
   if(!mdTyping){ snapshot(true); mdTyping=true; }
@@ -2083,7 +2151,7 @@ function scheduleMdCommit(){
   const stats=markdownPerfStats(mdTextEl.value);
   updateMarkdownPerformance(stats, lastMarkdownPerformance.nodes, lastMarkdownPerformance.parseMs, lastMarkdownPerformance.renderMs, delay);
   clearTimeout(mdInputTimer); mdInputTimer=setTimeout(commitMdText,delay);
-  if(stats.large && mdInfoEl) mdInfoEl.textContent='大型 Markdown 輸入中 · 已放慢即時同步避免卡頓 · '+stats.lines+' 行';
+  if(stats.large && mdInfoEl) setMdInfo(['大型 Markdown 輸入中','已放慢即時同步避免卡頓',`${stats.lines} 行`], 'warn');
 }
 function finishMdTyping(){ flushPendingMdText(); mdTyping=false; }
 function toggleMdPanel(on){
@@ -4076,6 +4144,10 @@ function runMarkdownRuleSelfTest(options={}){
     add('Setext 與水平線可同時判斷', parsed[0].children.some(n=>n.kind==='h' && n.title==='Setext H2') && parsed[0].children.some(n=>n.kind==='hr'), 'setext/hr');
     parsed=parseMarkdown('開頭序言\n\n---\n\n# A\n');
     add('序言後接 # 前的分隔線維持頂層', parsed[1] && parsed[1].kind==='hr' && !parsed[1].parent, parsed.map(n=>n.kind||n.title).join(','));
+    let diag=analyzeMarkdownPanelText('# T\n```js\nconsole.log(1)\n');
+    add('原始碼面板會提示未閉合程式碼圍欄', !diag.ok && diag.issues[0] && diag.issues[0].line===2 && /程式碼區塊/.test(diag.issues[0].message), JSON.stringify(diag));
+    diag=analyzeMarkdownPanelText('# T\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n');
+    add('原始碼面板會提示表格欄數不一致', diag.issues.some(i=>i.level==='warn' && i.line===4 && /表格資料列/.test(i.message)), JSON.stringify(diag));
     const dragRule=runDragRuleSelfTest();
     add('分隔線拖曳規則支援插入與拖入', dragRule.ok, JSON.stringify(dragRule));
     const oldW=svg.getAttribute('width'), oldH=svg.getAttribute('height');
@@ -4374,6 +4446,7 @@ Setext H2 寫法
 - 點節點 → 面板會高亮對應的文字列並捲動到位
 - 高亮:目前節點對應行會以淡色橫條標示,行距較寬方便對照
 - 點文字列 → 心智圖會選取並置中對應節點
+- 提示:如果程式碼區塊、HTML 註解、details 或表格欄數看起來有問題,面板下方會顯示行號
 - 即時編輯:在面板裡改 Markdown,心智圖會即時跟著更新
 - 調整:拖面板左緣可改寬度;開關與寬度都會自動記住
 - 大型檔案保護:貼入很多行 Markdown 時,同步會自動放慢,避免每打一字就卡住
