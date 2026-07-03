@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.11
+  版次 Version : 10.12
   最後更新 Updated: 2026-07-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-03  v10.12 強化置中縮放:置中功能會把整張心智圖等比例塞進可視畫面中央,大圖不再只靠左上留邊。
      2026-07-03  v10.11 新增固定上下順序的分隔線位置自檢:確認不同層級的 --- 會落在原始 Markdown 前後同層節點之間。
      2026-07-03  v10.10 修正固定版面方向:改為父節點在左、同層由上往下排列,更貼近原始 Markdown 順序;拖曳提示恢復上方/下方語意。
      2026-07-03  v10.09 整理固定直式版面:加大同層橫向間距與分隔線基準寬度,拖曳提示改成直式左/右語言並補自檢。
@@ -619,7 +620,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.11';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.12';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-03'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -3834,16 +3835,24 @@ window.addEventListener('mousedown', e=>{ if(!ctxEl.contains(e.target) && !ctxSu
 window.addEventListener('keydown', e=>{ if(e.key==='Escape') hideCtx(); });
 window.addEventListener('blur', hideCtx);
 
+function fitViewForContent(w, h, vw, vh, padding=80){
+  w=Math.max(1, Number(w)||1); h=Math.max(1, Number(h)||1);
+  vw=Math.max(1, Number(vw)||1); vh=Math.max(1, Number(vh)||1);
+  const usableW=Math.max(1, vw-padding);
+  const usableH=Math.max(1, vh-padding);
+  const nextScale=Math.max(MIN_ZOOM_SCALE, Math.min(1, Math.min(usableW/w, usableH/h)));
+  return {
+    scale:nextScale,
+    panX:(vw - w*nextScale)/2,
+    panY:(vh - h*nextScale)/2
+  };
+}
 function fit(){
   if(!roots.length){ return; }
   render();
-  // compute content size from svg
   const w=parseFloat(svg.getAttribute('width'))||1, h=parseFloat(svg.getAttribute('height'))||1;
-  const vw=viewport.clientWidth, vh=viewport.clientHeight;
-  scale=Math.max(MIN_ZOOM_SCALE, Math.min(1, Math.min(vw/(w+80), vh/(h+80))));
-  // 放得下就置中;放不下則靠左留邊(確保根節點可見)
-  panX = (w*scale <= vw) ? (vw - w*scale)/2 : 30;
-  panY = (h*scale <= vh) ? (vh - h*scale)/2 : 20;
+  const view=fitViewForContent(w, h, viewport.clientWidth, viewport.clientHeight, 80);
+  scale=view.scale; panX=view.panX; panY=view.panY;
   applyTransform();
 }
 
@@ -4109,6 +4118,10 @@ function runInteractionSelfTest(options={}){
     render();
     const cv=renderMapToCanvas({skipRender:true});
     add('匯出畫布可產生內容', !!(cv && cv.width>0 && cv.height>0), cv?`${cv.width}x${cv.height}`:'no canvas');
+    const fitCalc=fitViewForContent(12000, 8000, 1600, 900, 80);
+    const centerErrX=Math.abs((fitCalc.panX+12000*fitCalc.scale/2)-800);
+    const centerErrY=Math.abs((fitCalc.panY+8000*fitCalc.scale/2)-450);
+    add('置中縮放會把整張圖置於畫面中央', centerErrX<0.01 && centerErrY<0.01 && fitCalc.scale>=MIN_ZOOM_SCALE, `scale=${fitCalc.scale}, err=${centerErrX}/${centerErrY}`);
     svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
     const zmin=minZoomScale();
     add('大型圖縮放下限可低於 20% 且不小於安全下限', zmin>=MIN_ZOOM_SCALE && zmin<0.2, String(zmin));
