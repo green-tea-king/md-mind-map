@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.31
+  版次 Version : 10.32
   最後更新 Updated: 2026-07-04
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-04  v10.32 強化手動保存狀態:移除草稿後,左上狀態顯示未匯出提醒與最後匯出時間,讓保存責任更清楚。
      2026-07-04  v10.31 移除自動草稿功能:不再寫入 localStorage、不再啟動復原提示、不再離頁保存草稿,並移除草稿空間狀態與草稿自檢入口。
      2026-07-04  v10.30 重構自動草稿隔離:草稿升級為 v2 key、標記目前 origin、取消復原不刪草稿但不重複提示,並隔離舊 v1 草稿避免舊分頁反覆寫回。
      2026-07-04  v10.29 優化搜尋體驗:新增搜尋結果清單、找不到提示、結果點擊跳轉,並加入搜尋自檢與完整自檢。
@@ -259,6 +260,7 @@
   .save-state{display:inline-flex;align-items:center;margin-left:7px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid rgba(148,163,184,.55);color:#64748b;background:rgba(148,163,184,.12);}
   .save-state.saved{color:#0f766e;border-color:rgba(20,184,166,.42);background:rgba(20,184,166,.14);}
   .save-state.dirty{color:#b45309;border-color:rgba(245,158,11,.46);background:rgba(245,158,11,.17);}
+  .save-info{display:block;margin-top:3px;color:#64748b;font-size:10px;font-weight:700;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .fwbody{display:flex;flex-wrap:nowrap;align-items:center;gap:3px;padding:7px;width:max-content;}
   .floatwin.collapsed{box-shadow:0 3px 12px rgba(20,40,80,.16);}
   .floatwin.collapsed .fwhead{border-bottom:none;}
@@ -641,7 +643,7 @@
 </div>
 
 <!-- 浮動工具視窗(可拖曳標題列移動,點 — 收合) -->
-<div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span></div></div>
+<div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span><span id="saveInfo" class="save-info"></span></div></div>
 
 <div class="floatwin" id="fwFile">
   <div class="fwhead">檔案<button class="fwcollapse" title="收合">–</button></div>
@@ -722,10 +724,11 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.31';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.32';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
+const saveInfoEl = document.getElementById('saveInfo');
 const PREF_VERSION='9.82';
 const STORAGE_KEYS=Object.freeze({
   prefVersion:'mm-pref-version',
@@ -733,7 +736,8 @@ const STORAGE_KEYS=Object.freeze({
   markdownPanelWidth:'mm-mdw',
   floatingWindows:'mm-fwpos5',
   darkMode:'mm-dark',
-  nodeWrap:'mm-node-wrap'
+  nodeWrap:'mm-node-wrap',
+  lastExportAt:'mm-last-export-at'
 });
 const PREF_KEYS=[
   STORAGE_KEYS.markdownPanelOpen,
@@ -942,6 +946,7 @@ function collectDiagnostics(){
     orientation:orient,
     scale:Number(scale.toFixed(3)),
     saveState:hasUnsavedChanges()?'dirty':'saved',
+    lastExportAt:lastExportAt||'',
     performance:lastMarkdownPerformance,
     nodeWrap:getComputedStyle(document.documentElement).getPropertyValue('--node-wrap-width').trim(),
     storageKeys:Object.keys(STORAGE_KEYS),
@@ -3647,7 +3652,22 @@ const fileInput=document.getElementById('file');
 document.getElementById('btnOpen').onclick=()=>fileInput.click();
 fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); fileInput.value=''; };
 let savedMarkdown=null;
-function markSaved(){ savedMarkdown=roots.length ? toMarkdown(roots) : ''; refreshSaveState(); }
+let lastExportAt=storageGet(STORAGE_KEYS.lastExportAt, '', 'read last export time');
+function exportTimeText(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
+function setLastExportNow(){
+  lastExportAt=new Date().toISOString();
+  storageSet(STORAGE_KEYS.lastExportAt, lastExportAt, 'save last export time');
+}
+function markSaved(options={}){
+  savedMarkdown=roots.length ? toMarkdown(roots) : '';
+  if(options.exported) setLastExportNow();
+  refreshSaveState();
+}
 function hasUnsavedChanges(){
   if(savedMarkdown==null && !roots.length) return false;
   return (roots.length ? toMarkdown(roots) : '') !== savedMarkdown;
@@ -3659,7 +3679,16 @@ function refreshSaveState(){
   saveStateEl.textContent=dirty ? '未匯出' : '已匯出';
   saveStateEl.classList.toggle('dirty', dirty);
   saveStateEl.classList.toggle('saved', !dirty);
-  saveStateEl.title=dirty ? '目前內容尚未匯出 Markdown,離開前請手動匯出保存' : '目前內容已匯出或未變更';
+  const last=exportTimeText(lastExportAt);
+  saveStateEl.title=dirty
+    ? '目前內容尚未匯出 Markdown,離開前請手動匯出保存'
+    : (last ? `目前內容已匯出或未變更;最後匯出:${last}` : '目前內容已匯出或未變更');
+  if(saveInfoEl){
+    saveInfoEl.textContent=dirty
+      ? '尚未保存:請匯出 Markdown'
+      : (last ? `最後匯出 ${last}` : '請用匯出 Markdown 保存');
+    saveInfoEl.title=saveStateEl.title;
+  }
 }
 function confirmReplace(){ return !hasUnsavedChanges() || confirm('目前內容尚未匯出保存,確定要放棄變更嗎?'); }
 function loadFile(file){
@@ -3690,7 +3719,7 @@ function exportMd(){
   a.download = currentFileName || _expName('md');
   a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   originalMarkdownText=md;
-  markSaved();
+  markSaved({exported:true});
   showToast('Markdown 已匯出');
 }
 function buildSingleFileHTML(markdown){
@@ -4489,6 +4518,7 @@ function runInteractionSelfTest(options={}){
   const overlap=(a,b)=>!!(a&&b&&a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top);
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
   const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
+  const savedSavedMarkdown=savedMarkdown, savedLastExportAt=lastExportAt;
   try{
     roots=parseMarkdown('# 互動測試\n- 第一個節點\n- 第二個節點\n');
     setParents(roots[0], null);
@@ -4553,6 +4583,19 @@ function runInteractionSelfTest(options={}){
     add('左下資訊欄整合教學狀態與訊息', /節點/.test(statusText) && /右鍵叫出選單/.test(statusText) && /測試訊息/.test(statusText) && !overlap(sr,zr),
       `status=${statusText}, status=${sr&&Math.round(sr.left)+'-'+Math.round(sr.right)}, zoom=${zr&&Math.round(zr.left)+'-'+Math.round(zr.right)}`);
     setStatusMessage('', '', 0);
+    const oldSavedMarkdown=savedMarkdown, oldLastExportAt=lastExportAt;
+    roots=parseMarkdown('# 保存狀態自檢\n- A\n');
+    roots.forEach(r=>setParents(r,null));
+    savedMarkdown='# different\n';
+    lastExportAt='';
+    refreshSaveState();
+    add('未匯出狀態提示手動匯出', saveStateEl.classList.contains('dirty') && /請匯出 Markdown/.test(saveInfoEl.textContent||''), saveInfoEl.textContent);
+    savedMarkdown=toMarkdown(roots);
+    lastExportAt=new Date().toISOString();
+    refreshSaveState();
+    add('匯出後顯示最後匯出時間', saveStateEl.classList.contains('saved') && /最後匯出/.test(saveInfoEl.textContent||'') && !!lastExportAt, saveInfoEl.textContent);
+    savedMarkdown=oldSavedMarkdown; lastExportAt=oldLastExportAt;
+    render();
     svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
     const zmin=minZoomScale();
     add('大型圖縮放下限可低於 20% 且不小於安全下限', zmin>=MIN_ZOOM_SCALE && zmin<0.2, String(zmin));
@@ -4568,6 +4611,7 @@ function runInteractionSelfTest(options={}){
     return result;
   }finally{
     roots=savedRoots;
+    savedMarkdown=savedSavedMarkdown; lastExportAt=savedLastExportAt;
     scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
     roots.forEach(r=>setParents(r,null));
     selection=new Set();
@@ -5027,7 +5071,7 @@ Setext H2 寫法
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
-- 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,未匯出時瀏覽器會提示確認離開
+- 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,左上會顯示未匯出與最後匯出時間
 ## 🎨 配色
 - 固定使用活力分支 Vivid 配色,不提供主題切換
 - 顏色只是畫面視覺辨識,不會寫進 .md;載入時自動上色
