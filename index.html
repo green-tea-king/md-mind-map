@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.32
-  最後更新 Updated: 2026-07-04
+  版次 Version : 10.33
+  最後更新 Updated: 2026-07-06
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-06  v10.33 強化保存防呆:檔案選單標明 Markdown 才是原始稿保存,HTML/JPG/PDF 在未匯出時先提醒,避免誤把圖面匯出當成原稿保存。
      2026-07-04  v10.32 強化手動保存狀態:移除草稿後,左上狀態顯示未匯出提醒與最後匯出時間,讓保存責任更清楚。
      2026-07-04  v10.31 移除自動草稿功能:不再寫入 localStorage、不再啟動復原提示、不再離頁保存草稿,並移除草稿空間狀態與草稿自檢入口。
      2026-07-04  v10.30 重構自動草稿隔離:草稿升級為 v2 key、標記目前 origin、取消復原不刪草稿但不重複提示,並隔離舊 v1 草稿避免舊分頁反覆寫回。
@@ -724,8 +725,8 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.32';        // 版次:小改 +0.1,大改 +1.0
-const APP_DATE    = '2026-07-04'; // 最後更新日期 YYYY-MM-DD
+const APP_VERSION = '10.33';        // 版次:小改 +0.1,大改 +1.0
+const APP_DATE    = '2026-07-06'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const saveInfoEl = document.getElementById('saveInfo');
@@ -2640,11 +2641,11 @@ function showExportSize(kind, cv){
   const sf=cv._mmScaleFactor||1, w=cv.width, h=cv.height;
   showToast(`${kind} 已匯出 ${w}×${h}px / ${sf.toFixed(2)}x`);
 }
-async function exportJPG(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
+async function exportJPG(){ flushPendingMdText(); if(!confirmNonMarkdownExport('JPG')) return; await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
   try{ if(cv.toBlob){ cv.toBlob(b=>{ b?_dl(b,_expName('jpg')):_dlData(cv.toDataURL('image/jpeg',0.92),_expName('jpg')); showExportSize('JPG', cv); },'image/jpeg',0.92); }
        else { _dlData(cv.toDataURL('image/jpeg',0.92),_expName('jpg')); showExportSize('JPG', cv); } }
   catch(e){ logCaught(e,'export JPG'); setStatusMessage('匯出 JPG 失敗:'+e.message,'error',6000); } }
-async function exportPDF(){ await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
+async function exportPDF(){ flushPendingMdText(); if(!confirmNonMarkdownExport('PDF')) return; await settleBeforeExport(); const cv=renderMapToCanvas({skipRender:true}); if(!cv){ setStatusMessage('沒有可匯出的內容','warn',3600); return; }
   try{ const durl=cv.toDataURL('image/jpeg',0.92), b64=durl.split(',')[1], bin=atob(b64);
     const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
     const A4=[595.28,841.89]; const land=cv.width>cv.height;
@@ -3672,6 +3673,12 @@ function hasUnsavedChanges(){
   if(savedMarkdown==null && !roots.length) return false;
   return (roots.length ? toMarkdown(roots) : '') !== savedMarkdown;
 }
+function confirmNonMarkdownExport(kind){
+  if(!hasUnsavedChanges()) return true;
+  const msg=`${kind} 不會保存原始 Markdown;建議先匯出 Markdown 保存原稿。`;
+  setStatusMessage(msg,'warn',7000);
+  return confirm(`${msg}\n\n仍要繼續匯出 ${kind} 嗎?`);
+}
 function refreshSaveState(){
   if(!saveStateEl) return;
   const current=roots.length ? toMarkdown(roots) : '';
@@ -3735,6 +3742,7 @@ function buildSingleFileHTML(markdown){
 }
 function exportHTML(){
   flushPendingMdText();
+  if(!confirmNonMarkdownExport('HTML 單檔')) return;
   const generated=toMarkdown(roots);
   const md=(originalMarkdownText!=null && generated===savedMarkdown) ? originalMarkdownText : generated;
   const html=buildSingleFileHTML(md);
@@ -3990,10 +3998,10 @@ function getCommandItems(){
   return [
     {label:'新建', hint:'檔案', aliases:'new blank', fn:clickBtn('btnNew')},
     {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:clickBtn('btnOpen')},
-    {label:'匯出 Markdown', hint:'檔案', aliases:'save export md', fn:exportMd},
-    {label:'匯出 HTML 單檔', hint:'檔案', aliases:'html export single file offline backup', fn:exportHTML},
-    {label:'匯出 JPG', hint:'檔案', aliases:'image export', fn:exportJPG},
-    {label:'匯出 PDF', hint:'檔案', aliases:'pdf export', fn:exportPDF},
+    {label:'匯出 Markdown', hint:'保存原始稿', aliases:'save export md original source', fn:exportMd},
+    {label:'匯出 HTML 單檔', hint:'備份/分享', aliases:'html export single file offline backup not source save', fn:exportHTML},
+    {label:'匯出 JPG', hint:'圖面', aliases:'image export not source save', fn:exportJPG},
+    {label:'匯出 PDF', hint:'圖面', aliases:'pdf export not source save', fn:exportPDF},
     {label:'搜尋節點', hint:'檢視', aliases:'find search', fn:openSearch},
     {label:'置中縮放', hint:'檢視', aliases:'fit center zoom', fn:fit},
     {label:'深色介面', hint:'外觀', aliases:'dark mode', fn:()=>applyDark(true)},
@@ -4065,12 +4073,13 @@ function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
   const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
   const fileSub = [
+    {header: hasUnsavedChanges() ? '未匯出:請先用 .md 保存原始稿' : '已匯出:Markdown 原稿已保存'},
     {label:'✨ 新建', fn:clickBtn('btnNew')},
     {label:'📂 開啟 .md…', fn:()=>fileInput.click()},
-    {label:'💾 匯出 .md', fn:exportMd},
-    {label:'🌐 匯出 HTML 單檔', fn:exportHTML},
-    {label:'🖼 匯出 JPG', fn:exportJPG},
-    {label:'📄 匯出 PDF(A4)', fn:exportPDF},
+    {label:'💾 匯出 .md', key:'保存原始稿', fn:exportMd},
+    {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
+    {label:'🖼 匯出 JPG', key:'圖面', fn:exportJPG},
+    {label:'📄 匯出 PDF(A4)', key:'圖面', fn:exportPDF},
   ];
   const viewSub = [
     {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
@@ -4519,6 +4528,7 @@ function runInteractionSelfTest(options={}){
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
   const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
   const savedSavedMarkdown=savedMarkdown, savedLastExportAt=lastExportAt;
+  const savedConfirm=window.confirm;
   try{
     roots=parseMarkdown('# 互動測試\n- 第一個節點\n- 第二個節點\n');
     setParents(roots[0], null);
@@ -4590,10 +4600,16 @@ function runInteractionSelfTest(options={}){
     lastExportAt='';
     refreshSaveState();
     add('未匯出狀態提示手動匯出', saveStateEl.classList.contains('dirty') && /請匯出 Markdown/.test(saveInfoEl.textContent||''), saveInfoEl.textContent);
+    let confirmMessage='';
+    window.confirm=msg=>{ confirmMessage=String(msg||''); return false; };
+    add('非 Markdown 匯出會提醒不是原稿保存', confirmNonMarkdownExport('HTML 單檔')===false && /不會保存原始 Markdown/.test(confirmMessage), confirmMessage);
     savedMarkdown=toMarkdown(roots);
     lastExportAt=new Date().toISOString();
     refreshSaveState();
     add('匯出後顯示最後匯出時間', saveStateEl.classList.contains('saved') && /最後匯出/.test(saveInfoEl.textContent||'') && !!lastExportAt, saveInfoEl.textContent);
+    confirmMessage='';
+    add('已保存時非 Markdown 匯出不打擾', confirmNonMarkdownExport('PDF')===true && confirmMessage==='', confirmMessage);
+    window.confirm=savedConfirm;
     savedMarkdown=oldSavedMarkdown; lastExportAt=oldLastExportAt;
     render();
     svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
@@ -4611,6 +4627,7 @@ function runInteractionSelfTest(options={}){
     return result;
   }finally{
     roots=savedRoots;
+    window.confirm=savedConfirm;
     savedMarkdown=savedSavedMarkdown; lastExportAt=savedLastExportAt;
     scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
     roots.forEach(r=>setParents(r,null));
@@ -4741,6 +4758,7 @@ function runCommandPaletteSelfTest(options={}){
     const commands=getCommandItems();
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
+    add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 單檔' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
     add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
@@ -5065,13 +5083,13 @@ Setext H2 寫法
 - 調整:拖面板左緣可改寬度;開關與寬度都會自動記住
 - 大型檔案保護:貼入很多行 Markdown 時,同步會自動放慢,避免每打一字就卡住
 ## 💾 匯出與檔案
-- 匯出 .md:右鍵 → 檔案 → 匯出(或 Ctrl+S),100% 原生 Markdown
-- 匯出 HTML 單檔:右鍵 → 檔案 → 匯出 HTML 單檔,可離線開啟完整工具
-- 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片
-- 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4
+- 匯出 .md:右鍵 → 檔案 → 匯出(或 Ctrl+S),這才是保存原始 Markdown 原稿
+- 匯出 HTML 單檔:右鍵 → 檔案 → 匯出 HTML 單檔,可離線開啟完整工具,但不是原稿保存
+- 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片;未保存時會先提醒
+- 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4;未保存時會先提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
-- 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,左上會顯示未匯出與最後匯出時間
+- 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,HTML/JPG/PDF 不等於保存原始稿
 ## 🎨 配色
 - 固定使用活力分支 Vivid 配色,不提供主題切換
 - 顏色只是畫面視覺辨識,不會寫進 .md;載入時自動上色
