@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.34
+  版次 Version : 10.35
   最後更新 Updated: 2026-07-06
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-06  v10.35 新增匯出前檢查報告面板:Markdown 匯出前問題改以可點擊清單呈現,可跳到原始碼行或對應節點再決定是否匯出。
      2026-07-06  v10.34 新增匯出前檢查清單:匯出 Markdown 前提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題,可選擇仍然匯出。
      2026-07-06  v10.33 強化保存防呆:檔案選單標明 Markdown 才是原始稿保存,HTML/JPG/PDF 在未匯出時先提醒,避免誤把圖面匯出當成原稿保存。
      2026-07-04  v10.32 強化手動保存狀態:移除草稿後,左上狀態顯示未匯出提醒與最後匯出時間,讓保存責任更清楚。
@@ -466,6 +467,8 @@
   .report-checks{border-top:1px solid var(--line);padding:7px 10px;display:flex;flex-direction:column;gap:5px;}
   .report-group.collapsed .report-checks{display:none;}
   .report-check{display:grid;grid-template-columns:auto 1fr;gap:4px 7px;color:#64748b;line-height:1.35;}
+  .report-check.clickable{cursor:pointer;border-radius:6px;padding:4px;margin:-4px;}
+  .report-check.clickable:hover{background:rgba(47,111,237,.08);}
   .report-check b{color:#475569;}
   .report-check.fail b{color:#b91c1c;}
   .report-detail{grid-column:2;color:#7b8794;overflow-wrap:anywhere;}
@@ -726,7 +729,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.34';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.35';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-06'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1196,41 +1199,74 @@ function isMeaningfulNonTitleNode(n){
 }
 function analyzePreExportMarkdown(sourceText, rootsArr){
   const issues=[];
-  const add=(level, message, detail)=>issues.push({level, message, detail:detail||''});
+  const add=(level, message, detail, extra={})=>issues.push({level, message, detail:detail||'', ...extra});
   const diag=analyzeMarkdownPanelText(sourceText||'');
   for(const issue of diag.issues){
-    add(issue.level, `第 ${issue.line} 行:${issue.message}`);
+    add(issue.level, `第 ${issue.line} 行:${issue.message}`, '點擊可跳到原始 Markdown 行', {line:issue.line});
   }
-  let emptyCount=0, longCount=0;
-  const longSamples=[];
+  let emptyCount=0, longCount=0, firstEmpty=null, firstLong=null;
   const walk=n=>{
     if(!n) return;
     const title=String(n.title||'');
     if(!isMeaningfulNonTitleNode(n)){
-      if(!title.trim()) emptyCount++;
+      if(!title.trim()){ emptyCount++; if(!firstEmpty) firstEmpty=n; }
       const len=titleCharCount(title);
       if(len>80){
         longCount++;
-        if(longSamples.length<2) longSamples.push(`${title.replace(/\s+/g,' ').trim().slice(0,38)}...(${len}字)`);
+        if(!firstLong) firstLong={node:n, len, sample:title.replace(/\s+/g,' ').trim().slice(0,38)};
       }
     }
     for(const c of (n.children||[])) walk(c);
   };
   (rootsArr||[]).forEach(walk);
-  if(emptyCount) add('warn', `有 ${emptyCount} 個空標題節點`);
-  if(longCount) add('warn', `有 ${longCount} 個節點超過 80 字`, longSamples.join(' / '));
+  if(emptyCount) add('warn', `有 ${emptyCount} 個空標題節點`, firstEmpty?'點擊可定位第一個空節點':'', firstEmpty?{nodeId:firstEmpty.id}:{});
+  if(longCount) add('warn', `有 ${longCount} 個節點超過 80 字`, firstLong?`${firstLong.sample}...(${firstLong.len}字);點擊可定位第一個過長節點`:'', firstLong?{nodeId:firstLong.node.id}:{});
   return {ok:issues.length===0, issues};
+}
+function gotoPreExportIssue(issue){
+  if(!issue) return;
+  if(issue.line){
+    if(!mdPanelOpen) toggleMdPanel(true);
+    focusMdLine(issue.line);
+    return;
+  }
+  if(issue.nodeId){
+    const node=findByIdAll(issue.nodeId);
+    if(node){
+      selectOnly(node);
+      render();
+      centerOn(node);
+      if(mdPanelOpen) highlightMdNode(node);
+    }
+  }
+}
+function showPreExportReport(report){
+  const checks=(report.issues||[]).map((issue, idx)=>({
+    name:`${idx+1}. ${issue.message}`,
+    ok:false,
+    detail:issue.detail||'',
+    action:()=>gotoPreExportIssue(issue)
+  }));
+  return showSelfTestReport({
+    title:'匯出前檢查',
+    summaryText:`需檢查 ${checks.length} 項`,
+    ok:false,
+    passed:0,
+    failed:checks.length,
+    checks,
+    groups:[{name:'可改善項目', result:{ok:false, passed:0, failed:checks.length, checks}}]
+  });
 }
 function confirmMarkdownExportQuality(sourceText, rootsArr){
   const report=analyzePreExportMarkdown(sourceText, rootsArr);
   if(report.ok) return true;
-  const shown=report.issues.slice(0,5).map((i,idx)=>`${idx+1}. ${i.message}${i.detail?' - '+i.detail:''}`);
-  const more=report.issues.length>5 ? `\n...另有 ${report.issues.length-5} 項` : '';
-  const msg=`匯出前檢查發現 ${report.issues.length} 個可改善項目:\n\n${shown.join('\n')}${more}\n\n仍要匯出 Markdown 嗎?`;
+  showPreExportReport(report);
+  const msg=`匯出前檢查發現 ${report.issues.length} 個可改善項目,已在右下方列出。\n\n仍要匯出 Markdown 嗎?`;
   setStatusMessage(`匯出前檢查:${report.issues.length} 個可改善項目`,'warn',7000);
   return confirm(msg);
 }
 window.analyzePreExportMarkdown=analyzePreExportMarkdown;
+window.showPreExportReport=showPreExportReport;
 function htmlBlockTag(line){
   const m=String(line||'').match(/^\s{0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|>|\/>)/);
   if(!m) return null;
@@ -4494,6 +4530,7 @@ function runMarkdownRuleSelfTest(options={}){
     const preExportRoots=parseMarkdown('# 匯出前檢查\n- \n- '+('很長的節點文字'.repeat(12))+'\n');
     const preExport=analyzePreExportMarkdown('# 匯出前檢查\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n```js\nx\n', preExportRoots);
     add('匯出前檢查會彙整語法與節點品質', preExport.issues.some(i=>/程式碼區塊/.test(i.message)) && preExport.issues.some(i=>/表格資料列/.test(i.message)) && preExport.issues.some(i=>/空標題/.test(i.message)) && preExport.issues.some(i=>/超過 80 字/.test(i.message)), JSON.stringify(preExport));
+    add('匯出前檢查項目可定位行或節點', preExport.issues.some(i=>i.line) && preExport.issues.some(i=>i.nodeId), JSON.stringify(preExport));
     const dragRule=runDragRuleSelfTest();
     add('分隔線拖曳規則支援插入與拖入', dragRule.ok, JSON.stringify(dragRule));
     const oldW=svg.getAttribute('width'), oldH=svg.getAttribute('height');
@@ -4730,7 +4767,9 @@ function showSelfTestReport(result){
   if(!selfTestReportEl || !selfTestSummaryEl || !selfTestBodyEl || !result) return result;
   if(document.activeElement && !selfTestReportEl.contains(document.activeElement)) selfTestReturnFocus=document.activeElement;
   const total=(result.checks||[]).length;
-  selfTestSummaryEl.textContent=result.ok ? `通過 ${result.passed}/${total}` : `失敗 ${result.failed} 組`;
+  const titleEl=selfTestReportEl.querySelector('.report-title');
+  if(titleEl) titleEl.textContent=result.title||'自檢報告';
+  selfTestSummaryEl.textContent=result.summaryText || (result.ok ? `通過 ${result.passed}/${total}` : `失敗 ${result.failed} 組`);
   selfTestSummaryEl.classList.toggle('fail', !result.ok);
   selfTestBodyEl.replaceChildren();
   const groups=result.groups&&result.groups.length ? result.groups : [{name:'自檢', result}];
@@ -4765,6 +4804,13 @@ function showSelfTestReport(result){
       for(const c of showChecks){
         const item=document.createElement('div');
         item.className='report-check'+(c.ok?'':' fail');
+        if(typeof c.action==='function'){
+          item.classList.add('clickable');
+          item.tabIndex=0;
+          item.title='點擊定位';
+          item.addEventListener('click', c.action);
+          item.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); c.action(); } });
+        }
         const mark=document.createElement('span');
         mark.textContent=c.ok?'✓':'!';
         const title=document.createElement('b');
@@ -4955,10 +5001,14 @@ function runKeyboardAccessibilitySelfTest(options={}){
     const escEvt=new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
     cmdInputEl.dispatchEvent(escEvt);
     add('命令面板支援 Esc 關閉', !cmdPaletteEl.classList.contains('show'), cmdPaletteEl.className);
-    const fakeResult={ok:true, passed:1, failed:0, checks:[{name:'鍵盤報告測試', ok:true, detail:'ok'}], groups:[{name:'鍵盤報告', result:{ok:true, passed:1, failed:0, checks:[{name:'可顯示', ok:true, detail:'ok'}]}}]};
+    let reportActionHit=false;
+    const fakeResult={title:'鍵盤報告測試', ok:false, passed:0, failed:1, checks:[{name:'鍵盤報告測試', ok:false, detail:'ok'}], groups:[{name:'鍵盤報告', result:{ok:false, passed:0, failed:1, checks:[{name:'可顯示並可點擊', ok:false, detail:'ok', action:()=>{ reportActionHit=true; }}]}}]};
     firstNode&&firstNode.focus();
     showSelfTestReport(fakeResult);
     add('自檢報告開啟後焦點進入面板', selfTestReportEl.classList.contains('show') && document.activeElement===selfTestCloseEl, document.activeElement&&document.activeElement.id);
+    const clickableReportItem=selfTestBodyEl.querySelector('.report-check.clickable');
+    clickableReportItem&&clickableReportItem.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    add('報告項目支援點擊定位動作', !!clickableReportItem && reportActionHit && selfTestReportEl.querySelector('.report-title').textContent==='鍵盤報告測試', clickableReportItem&&clickableReportItem.textContent);
     window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
     add('自檢報告支援 Esc 關閉並回復焦點', !selfTestReportEl.classList.contains('show') && document.activeElement===firstNode, document.activeElement&&document.activeElement.className);
     const failed=checks.filter(c=>!c.ok);
