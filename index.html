@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.35
+  版次 Version : 10.36
   最後更新 Updated: 2026-07-06
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-06  v10.36 新增匯出前檢查設定:可切換空標題、程式碼、表格檢查,並設定過長節點門檻 80/120/關閉。
      2026-07-06  v10.35 新增匯出前檢查報告面板:Markdown 匯出前問題改以可點擊清單呈現,可跳到原始碼行或對應節點再決定是否匯出。
      2026-07-06  v10.34 新增匯出前檢查清單:匯出 Markdown 前提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題,可選擇仍然匯出。
      2026-07-06  v10.33 強化保存防呆:檔案選單標明 Markdown 才是原始稿保存,HTML/JPG/PDF 在未匯出時先提醒,避免誤把圖面匯出當成原稿保存。
@@ -729,7 +730,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.35';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.36';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-06'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -742,14 +743,16 @@ const STORAGE_KEYS=Object.freeze({
   floatingWindows:'mm-fwpos5',
   darkMode:'mm-dark',
   nodeWrap:'mm-node-wrap',
-  lastExportAt:'mm-last-export-at'
+  lastExportAt:'mm-last-export-at',
+  preExportChecks:'mm-pre-export-checks'
 });
 const PREF_KEYS=[
   STORAGE_KEYS.markdownPanelOpen,
   STORAGE_KEYS.markdownPanelWidth,
   STORAGE_KEYS.floatingWindows,
   STORAGE_KEYS.darkMode,
-  STORAGE_KEYS.nodeWrap
+  STORAGE_KEYS.nodeWrap,
+  STORAGE_KEYS.preExportChecks
 ];
 function storageReport(err, context){
   if(typeof logCaught==='function') return logCaught(err, context);
@@ -1194,14 +1197,42 @@ function analyzeMarkdownPanelText(text){
 }
 window.analyzeMarkdownPanelText=analyzeMarkdownPanelText;
 function titleCharCount(text){ return Array.from(String(text||'').replace(/\s+/g,' ').trim()).length; }
+const DEFAULT_PRE_EXPORT_CHECKS=Object.freeze({emptyTitle:true, codeFence:true, table:true, longLimit:80});
+function normalizePreExportChecks(value){
+  const v=value&&typeof value==='object' ? value : {};
+  const limit=Number(v.longLimit);
+  return {
+    emptyTitle:v.emptyTitle!==false,
+    codeFence:v.codeFence!==false,
+    table:v.table!==false,
+    longLimit:[0,80,120].includes(limit) ? limit : DEFAULT_PRE_EXPORT_CHECKS.longLimit
+  };
+}
+function getPreExportChecks(){
+  return normalizePreExportChecks(storageJsonGet(STORAGE_KEYS.preExportChecks, DEFAULT_PRE_EXPORT_CHECKS, 'read pre-export checks'));
+}
+function savePreExportChecks(settings){
+  storageJsonSet(STORAGE_KEYS.preExportChecks, normalizePreExportChecks(settings), 'save pre-export checks');
+}
+function setPreExportCheck(key, value){
+  const s=getPreExportChecks();
+  s[key]=value;
+  savePreExportChecks(s);
+  showToast('匯出前檢查設定已更新');
+}
+function preExportCheckLabel(key, enabled){ return (enabled?'✓ ':'□ ')+key; }
 function isMeaningfulNonTitleNode(n){
   return !!(n && (n.kind==='hr' || n.table || n.code!=null || n.htmlRaw || n.refdef || n.fndef || n.alert));
 }
 function analyzePreExportMarkdown(sourceText, rootsArr){
+  const settings=getPreExportChecks();
   const issues=[];
   const add=(level, message, detail, extra={})=>issues.push({level, message, detail:detail||'', ...extra});
   const diag=analyzeMarkdownPanelText(sourceText||'');
   for(const issue of diag.issues){
+    const msg=String(issue.message||'');
+    if(!settings.codeFence && /程式碼區塊/.test(msg)) continue;
+    if(!settings.table && /表格/.test(msg)) continue;
     add(issue.level, `第 ${issue.line} 行:${issue.message}`, '點擊可跳到原始 Markdown 行', {line:issue.line});
   }
   let emptyCount=0, longCount=0, firstEmpty=null, firstLong=null;
@@ -1209,9 +1240,9 @@ function analyzePreExportMarkdown(sourceText, rootsArr){
     if(!n) return;
     const title=String(n.title||'');
     if(!isMeaningfulNonTitleNode(n)){
-      if(!title.trim()){ emptyCount++; if(!firstEmpty) firstEmpty=n; }
+      if(settings.emptyTitle && !title.trim()){ emptyCount++; if(!firstEmpty) firstEmpty=n; }
       const len=titleCharCount(title);
-      if(len>80){
+      if(settings.longLimit>0 && len>settings.longLimit){
         longCount++;
         if(!firstLong) firstLong={node:n, len, sample:title.replace(/\s+/g,' ').trim().slice(0,38)};
       }
@@ -1220,7 +1251,7 @@ function analyzePreExportMarkdown(sourceText, rootsArr){
   };
   (rootsArr||[]).forEach(walk);
   if(emptyCount) add('warn', `有 ${emptyCount} 個空標題節點`, firstEmpty?'點擊可定位第一個空節點':'', firstEmpty?{nodeId:firstEmpty.id}:{});
-  if(longCount) add('warn', `有 ${longCount} 個節點超過 80 字`, firstLong?`${firstLong.sample}...(${firstLong.len}字);點擊可定位第一個過長節點`:'', firstLong?{nodeId:firstLong.node.id}:{});
+  if(longCount) add('warn', `有 ${longCount} 個節點超過 ${settings.longLimit} 字`, firstLong?`${firstLong.sample}...(${firstLong.len}字);點擊可定位第一個過長節點`:'', firstLong?{nodeId:firstLong.node.id}:{});
   return {ok:issues.length===0, issues};
 }
 function gotoPreExportIssue(issue){
@@ -4149,6 +4180,19 @@ cmdInputEl.addEventListener('keydown', e=>{
   else if(e.key==='Escape'){ e.preventDefault(); closeCommandPalette(); }
 });
 cmdPaletteEl.addEventListener('mousedown', e=>{ if(e.target===cmdPaletteEl) closeCommandPalette(); });
+function buildPreExportCheckMenu(){
+  const s=getPreExportChecks();
+  return [
+    {header:'匯出前檢查設定'},
+    {label:preExportCheckLabel('空標題提醒', s.emptyTitle), fn:()=>setPreExportCheck('emptyTitle', !s.emptyTitle)},
+    {label:preExportCheckLabel('未閉合程式碼', s.codeFence), fn:()=>setPreExportCheck('codeFence', !s.codeFence)},
+    {label:preExportCheckLabel('表格欄位問題', s.table), fn:()=>setPreExportCheck('table', !s.table)},
+    '—',
+    {label:(s.longLimit===80?'✓ ':'')+'過長節點 80 字', fn:()=>setPreExportCheck('longLimit', 80)},
+    {label:(s.longLimit===120?'✓ ':'')+'過長節點 120 字', fn:()=>setPreExportCheck('longLimit', 120)},
+    {label:(s.longLimit===0?'✓ ':'')+'不檢查過長節點', fn:()=>setPreExportCheck('longLimit', 0)}
+  ];
+}
 function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
   const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
@@ -4160,6 +4204,7 @@ function buildMainMenuItems(){
     {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
     {label:'🖼 匯出 JPG', key:'圖面', fn:exportJPG},
     {label:'📄 匯出 PDF(A4)', key:'圖面', fn:exportPDF},
+    {label:'⚙ 匯出前檢查設定', sub:buildPreExportCheckMenu()},
   ];
   const viewSub = [
     {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
@@ -4490,6 +4535,7 @@ window.runMindMapTemplateSelfTest=runTemplateSelfTest;
 function runMarkdownRuleSelfTest(options={}){
   const checks=[];
   const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
+  const savedPreExportSettings=getPreExportChecks();
   try{
     let parsed=parseMarkdown('# T\n| A | B |\n|---|---|\n| x\\|y | z |\n');
     let tableNode=parsed[0].children.find(n=>n.table);
@@ -4527,10 +4573,15 @@ function runMarkdownRuleSelfTest(options={}){
     add('原始碼面板會提示未閉合程式碼圍欄', !diag.ok && diag.issues[0] && diag.issues[0].line===2 && /程式碼區塊/.test(diag.issues[0].message), JSON.stringify(diag));
     diag=analyzeMarkdownPanelText('# T\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n');
     add('原始碼面板會提示表格欄數不一致', diag.issues.some(i=>i.level==='warn' && i.line===4 && /表格資料列/.test(i.message)), JSON.stringify(diag));
+    savePreExportChecks(DEFAULT_PRE_EXPORT_CHECKS);
     const preExportRoots=parseMarkdown('# 匯出前檢查\n- \n- '+('很長的節點文字'.repeat(12))+'\n');
     const preExport=analyzePreExportMarkdown('# 匯出前檢查\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n```js\nx\n', preExportRoots);
     add('匯出前檢查會彙整語法與節點品質', preExport.issues.some(i=>/程式碼區塊/.test(i.message)) && preExport.issues.some(i=>/表格資料列/.test(i.message)) && preExport.issues.some(i=>/空標題/.test(i.message)) && preExport.issues.some(i=>/超過 80 字/.test(i.message)), JSON.stringify(preExport));
     add('匯出前檢查項目可定位行或節點', preExport.issues.some(i=>i.line) && preExport.issues.some(i=>i.nodeId), JSON.stringify(preExport));
+    savePreExportChecks({emptyTitle:false, codeFence:false, table:false, longLimit:0});
+    const disabledPreExport=analyzePreExportMarkdown('# T\n```js\nx\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n', preExportRoots);
+    add('匯出前檢查設定可關閉提醒項目', disabledPreExport.ok && disabledPreExport.issues.length===0, JSON.stringify(disabledPreExport));
+    savePreExportChecks(savedPreExportSettings);
     const dragRule=runDragRuleSelfTest();
     add('分隔線拖曳規則支援插入與拖入', dragRule.ok, JSON.stringify(dragRule));
     const oldW=svg.getAttribute('width'), oldH=svg.getAttribute('height');
@@ -4551,6 +4602,7 @@ function runMarkdownRuleSelfTest(options={}){
     if(options.toast) showToast(result.ok ? `Markdown 規則自檢通過:${result.passed}/${checks.length}` : `Markdown 規則自檢失敗:${failed.length} 項`);
     return result;
   }catch(e){
+    savePreExportChecks(savedPreExportSettings);
     logCaught(e,'markdown rule self test');
     const result={ok:false, passed:0, failed:1, checks:[{name:'Markdown 規則自檢執行例外', ok:false, detail:String(e&&e.message||e)}]};
     if(options.toast) showToast('Markdown 規則自檢執行失敗');
@@ -4853,6 +4905,9 @@ function runCommandPaletteSelfTest(options={}){
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
     add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 單檔' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
     add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
+    const menu=buildMainMenuItems();
+    const fileSub=menu.fileSub||[];
+    add('檔案選單包含匯出前檢查設定', fileSub.some(i=>i.label==='⚙ 匯出前檢查設定' && i.sub && i.sub.length>=6), fileSub.map(i=>i.label||i.header||i).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
     add('自檢報告面板 DOM 存在', !!(selfTestReportEl && selfTestSummaryEl && selfTestBodyEl && selfTestExpandEl && selfTestCollapseEl), '');
@@ -5185,6 +5240,7 @@ Setext H2 寫法
 - 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片;未保存時會先提醒
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4;未保存時會先提醒
 - 匯出前檢查:匯出 .md 前會提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題
+- 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
 - 保存方式:本工具不使用自動草稿;離開前請用「匯出 Markdown」保存,HTML/JPG/PDF 不等於保存原始稿
