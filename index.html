@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.39
+  版次 Version : 10.40
   最後更新 Updated: 2026-07-07
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-07  v10.40 新增匯出前檢查「重新檢查」:修正後可直接刷新報告,不必重新啟動匯出流程。
      2026-07-07  v10.39 新增匯出前檢查「全部可安全修正」:目前只批次補空標題,避免自動改寫長文字或語法內容。
      2026-07-07  v10.38 優化匯出前檢查報告:依嚴重度分成錯誤、警告、建議,讓必修問題更容易優先處理。
      2026-07-07  v10.37 新增匯出前檢查快速修正:空標題可一鍵補成未命名節點,過長節點可定位並開啟編輯。
@@ -735,7 +736,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.39';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.40';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-07'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1373,13 +1374,30 @@ function performPreExportSafeFixes(report){
   else closeSelfTestReport();
   return result;
 }
-function showPreExportReport(report){
-  const groups=buildPreExportReportGroups(report.issues||[]);
-  const checks=groups.flatMap(g=>g.result.checks);
+function rerunPreExportReport(){
+  const report=analyzePreExportMarkdown(toMarkdown(roots), roots);
+  if(report.ok){
+    closeSelfTestReport();
+    setStatusMessage('匯出前檢查通過','ok',4200);
+    showToast('匯出前檢查通過');
+    return report;
+  }
+  showPreExportReport(report);
+  setStatusMessage(`匯出前檢查:${report.issues.length} 個可改善項目`,'warn',5200);
+  return report;
+}
+function buildPreExportReportActions(report){
   const safeFixCount=(report.issues||[]).reduce((sum,i)=>{
     if(!i || i.type!=='emptyTitle') return sum;
     return sum + (Array.isArray(i.nodeIds) && i.nodeIds.length ? i.nodeIds.length : (i.nodeId?1:0));
   },0);
+  const actions=[{label:'重新檢查', title:'重新分析目前心智圖', fn:()=>rerunPreExportReport()}];
+  if(safeFixCount) actions.push({label:`全部可安全修正(${safeFixCount})`, title:'只會批次補空標題', fn:()=>performPreExportSafeFixes(report)});
+  return actions;
+}
+function showPreExportReport(report){
+  const groups=buildPreExportReportGroups(report.issues||[]);
+  const checks=groups.flatMap(g=>g.result.checks);
   return showSelfTestReport({
     title:'匯出前檢查',
     summaryText:`需檢查 ${checks.length} 項`,
@@ -1388,7 +1406,7 @@ function showPreExportReport(report){
     failed:checks.length,
     checks,
     groups,
-    actions:safeFixCount?[{label:`全部可安全修正(${safeFixCount})`, title:'只會批次補空標題', fn:()=>performPreExportSafeFixes(report)}]:[]
+    actions:buildPreExportReportActions(report)
   });
 }
 function confirmMarkdownExportQuality(sourceText, rootsArr){
@@ -1402,6 +1420,7 @@ function confirmMarkdownExportQuality(sourceText, rootsArr){
 window.analyzePreExportMarkdown=analyzePreExportMarkdown;
 window.showPreExportReport=showPreExportReport;
 window.buildPreExportReportGroups=buildPreExportReportGroups;
+window.buildPreExportReportActions=buildPreExportReportActions;
 window.applyEmptyTitleQuickFix=applyEmptyTitleQuickFix;
 window.applyPreExportSafeFixes=applyPreExportSafeFixes;
 function htmlBlockTag(line){
@@ -4701,6 +4720,8 @@ function runMarkdownRuleSelfTest(options={}){
     });
     const safeFixTitles=safeFixRoots[0].children.map(n=>n.title);
     add('匯出前檢查全部安全修正只處理空標題', safeFixResult.fixed===2 && safeFixTitles[0]==='未命名節點' && safeFixTitles[1]==='未命名節點' && safeFixTitles[2].startsWith('很長的節點文字'), `${safeFixResult.fixed}/${safeFixTitles.join('|')}`);
+    const reportActions=buildPreExportReportActions(safeFixReport).map(a=>a.label);
+    add('匯出前檢查報告提供重新檢查動作', reportActions.some(label=>label==='重新檢查') && reportActions.some(label=>/^全部可安全修正/.test(label)), reportActions.join(','));
     savePreExportChecks({emptyTitle:false, codeFence:false, table:false, longLimit:0});
     const disabledPreExport=analyzePreExportMarkdown('# T\n```js\nx\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n', preExportRoots);
     add('匯出前檢查設定可關閉提醒項目', disabledPreExport.ok && disabledPreExport.issues.length===0, JSON.stringify(disabledPreExport));
@@ -5375,6 +5396,7 @@ Setext H2 寫法
 - 匯出前檢查:匯出 .md 前會提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題
 - 快速修正:檢查報告中點擊空標題可補成「未命名節點」,點擊過長節點可定位並開啟編輯
 - 全部可安全修正:匯出前檢查可批次補空標題,不會自動改寫過長文字或語法內容
+- 重新檢查:修正問題後可在報告上直接刷新清單,不用重新執行匯出
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
