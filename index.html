@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.42
+  版次 Version : 10.43
   最後更新 Updated: 2026-07-07
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-07  v10.43 固定瀏覽器分頁標題為 MD心智圖,避免既有分頁顯示未命名。
      2026-07-07  v10.42 優化匯出前檢查報告按鈕:重新檢查、安全修正、忽略本次依主次排序並套用不同樣式。
      2026-07-07  v10.41 新增匯出前檢查「忽略本次提醒」:只關閉目前報告,不寫入永久設定。
      2026-07-07  v10.40 新增匯出前檢查「重新檢查」:修正後可直接刷新報告,不必重新啟動匯出流程。
@@ -747,8 +748,11 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.42';        // 版次:小改 +0.1,大改 +1.0
+const APP_TITLE   = 'MD心智圖';
+const APP_VERSION = '10.43';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-07'; // 最後更新日期 YYYY-MM-DD
+function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
+syncAppTitle();
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const saveInfoEl = document.getElementById('saveInfo');
@@ -4682,6 +4686,11 @@ function runMarkdownRuleSelfTest(options={}){
   const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
   const savedPreExportSettings=getPreExportChecks();
   try{
+    const oldTitle=document.title;
+    document.title='未命名';
+    syncAppTitle();
+    add('瀏覽器分頁標題固定為 MD心智圖', document.title===APP_TITLE, document.title);
+    document.title=oldTitle;
     let parsed=parseMarkdown('# T\n| A | B |\n|---|---|\n| x\\|y | z |\n');
     let tableNode=parsed[0].children.find(n=>n.table);
     add('表格支援跳脫 pipe 並以字面 pipe 顯示', tableNode && tableNode.table.rows[0][0]==='x|y', tableNode&&tableNode.table.rows[0][0]);
@@ -5422,6 +5431,7 @@ Setext H2 寫法
 - 重新檢查:修正問題後可在報告上直接刷新清單,不用重新執行匯出
 - 忽略本次提醒:只關閉目前這次報告,不會改變永久檢查設定
 - 報告按鈕主次:重新檢查是主要動作,安全修正是輔助動作,忽略本次使用低調樣式
+- 分頁標題:瀏覽器分頁會固定顯示 MD心智圖,避免舊分頁顯示未命名
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
