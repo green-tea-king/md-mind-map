@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.37
+  版次 Version : 10.38
   最後更新 Updated: 2026-07-07
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-07  v10.38 優化匯出前檢查報告:依嚴重度分成錯誤、警告、建議,讓必修問題更容易優先處理。
      2026-07-07  v10.37 新增匯出前檢查快速修正:空標題可一鍵補成未命名節點,過長節點可定位並開啟編輯。
      2026-07-06  v10.36 新增匯出前檢查設定:可切換空標題、程式碼、表格檢查,並設定過長節點門檻 80/120/關閉。
      2026-07-06  v10.35 新增匯出前檢查報告面板:Markdown 匯出前問題改以可點擊清單呈現,可跳到原始碼行或對應節點再決定是否匯出。
@@ -465,6 +466,8 @@
   .report-caret{width:16px;color:#94a3b8;font-size:11px;}
   .report-group-head .badge{font-size:11px;border-radius:999px;padding:2px 7px;background:#dcfce7;color:#15803d;}
   .report-group.fail .report-group-head .badge{background:#fee2e2;color:#b91c1c;}
+  .report-group.sev-warn .report-group-head .badge{background:#fef3c7;color:#b45309;}
+  .report-group.sev-info .report-group-head .badge{background:#dbeafe;color:#1d4ed8;}
   .report-group-head small{margin-left:auto;color:#7b8794;font-weight:700;}
   .report-checks{border-top:1px solid var(--line);padding:7px 10px;display:flex;flex-direction:column;gap:5px;}
   .report-group.collapsed .report-checks{display:none;}
@@ -731,7 +734,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.37';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.38';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-07'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1299,13 +1302,35 @@ function gotoPreExportIssue(issue){
     }
   }
 }
+function preExportSeverityInfo(level){
+  if(level==='error') return {key:'error', name:'錯誤', badge:'ERROR', order:0};
+  if(level==='warn') return {key:'warn', name:'警告', badge:'WARN', order:1};
+  return {key:'info', name:'建議', badge:'INFO', order:2};
+}
+function buildPreExportReportGroups(issues){
+  const buckets=new Map();
+  (issues||[]).forEach((issue, idx)=>{
+    const sev=preExportSeverityInfo(issue.level);
+    if(!buckets.has(sev.key)) buckets.set(sev.key, {...sev, checks:[]});
+    buckets.get(sev.key).checks.push({
+      name:`${idx+1}. ${issue.message}`,
+      ok:false,
+      detail:issue.detail||'',
+      action:()=>gotoPreExportIssue(issue)
+    });
+  });
+  return [...buckets.values()]
+    .sort((a,b)=>a.order-b.order)
+    .map(g=>({
+      name:g.name,
+      badge:g.badge,
+      severity:g.key,
+      result:{ok:false, passed:0, failed:g.checks.length, checks:g.checks}
+    }));
+}
 function showPreExportReport(report){
-  const checks=(report.issues||[]).map((issue, idx)=>({
-    name:`${idx+1}. ${issue.message}`,
-    ok:false,
-    detail:issue.detail||'',
-    action:()=>gotoPreExportIssue(issue)
-  }));
+  const groups=buildPreExportReportGroups(report.issues||[]);
+  const checks=groups.flatMap(g=>g.result.checks);
   return showSelfTestReport({
     title:'匯出前檢查',
     summaryText:`需檢查 ${checks.length} 項`,
@@ -1313,7 +1338,7 @@ function showPreExportReport(report){
     passed:0,
     failed:checks.length,
     checks,
-    groups:[{name:'可改善項目', result:{ok:false, passed:0, failed:checks.length, checks}}]
+    groups
   });
 }
 function confirmMarkdownExportQuality(sourceText, rootsArr){
@@ -1326,6 +1351,7 @@ function confirmMarkdownExportQuality(sourceText, rootsArr){
 }
 window.analyzePreExportMarkdown=analyzePreExportMarkdown;
 window.showPreExportReport=showPreExportReport;
+window.buildPreExportReportGroups=buildPreExportReportGroups;
 window.applyEmptyTitleQuickFix=applyEmptyTitleQuickFix;
 function htmlBlockTag(line){
   const m=String(line||'').match(/^\s{0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|>|\/>)/);
@@ -4610,6 +4636,12 @@ function runMarkdownRuleSelfTest(options={}){
     add('匯出前檢查會標記可快速處理類型', preExport.issues.some(i=>i.type==='emptyTitle') && preExport.issues.some(i=>i.type==='longTitle'), JSON.stringify(preExport));
     const emptyNode=preExportRoots[0]&&preExportRoots[0].children&&preExportRoots[0].children[0];
     add('空標題快速修正會補成未命名節點', applyEmptyTitleQuickFix(emptyNode) && emptyNode.title==='未命名節點', emptyNode&&emptyNode.title);
+    const groupedPreExport=buildPreExportReportGroups([
+      {level:'error', message:'錯誤測試'},
+      {level:'warn', message:'警告測試'},
+      {level:'info', message:'建議測試'}
+    ]);
+    add('匯出前檢查報告會依嚴重度分組', groupedPreExport.map(g=>g.name).join('|')==='錯誤|警告|建議' && groupedPreExport.every(g=>g.result.checks.length===1), groupedPreExport.map(g=>`${g.name}:${g.result.checks.length}`).join(','));
     savePreExportChecks({emptyTitle:false, codeFence:false, table:false, longLimit:0});
     const disabledPreExport=analyzePreExportMarkdown('# T\n```js\nx\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n', preExportRoots);
     add('匯出前檢查設定可關閉提醒項目', disabledPreExport.ok && disabledPreExport.issues.length===0, JSON.stringify(disabledPreExport));
@@ -4860,7 +4892,7 @@ function showSelfTestReport(result){
   for(const g of groups){
     const group=document.createElement('section');
     const ok=!!(g.result&&g.result.ok);
-    group.className='report-group'+(ok?' collapsed':' fail');
+    group.className='report-group'+(ok?' collapsed':' fail')+(g.severity?` sev-${g.severity}`:'');
     const head=document.createElement('div');
     head.className='report-group-head';
     const caret=document.createElement('span');
@@ -4868,7 +4900,7 @@ function showSelfTestReport(result){
     caret.textContent=ok?'▶':'▼';
     const badge=document.createElement('span');
     badge.className='badge';
-    badge.textContent=ok?'PASS':'FAIL';
+    badge.textContent=g.badge || (ok?'PASS':'FAIL');
     const name=document.createElement('span');
     name.textContent=g.name||'自檢';
     const meta=document.createElement('small');
@@ -5273,6 +5305,7 @@ Setext H2 寫法
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4;未保存時會先提醒
 - 匯出前檢查:匯出 .md 前會提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題
 - 快速修正:檢查報告中點擊空標題可補成「未命名節點」,點擊過長節點可定位並開啟編輯
+- 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
