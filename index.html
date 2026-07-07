@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.36
-  最後更新 Updated: 2026-07-06
+  版次 Version : 10.37
+  最後更新 Updated: 2026-07-07
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-07  v10.37 新增匯出前檢查快速修正:空標題可一鍵補成未命名節點,過長節點可定位並開啟編輯。
      2026-07-06  v10.36 新增匯出前檢查設定:可切換空標題、程式碼、表格檢查,並設定過長節點門檻 80/120/關閉。
      2026-07-06  v10.35 新增匯出前檢查報告面板:Markdown 匯出前問題改以可點擊清單呈現,可跳到原始碼行或對應節點再決定是否匯出。
      2026-07-06  v10.34 新增匯出前檢查清單:匯出 Markdown 前提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題,可選擇仍然匯出。
@@ -730,8 +731,8 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.36';        // 版次:小改 +0.1,大改 +1.0
-const APP_DATE    = '2026-07-06'; // 最後更新日期 YYYY-MM-DD
+const APP_VERSION = '10.37';        // 版次:小改 +0.1,大改 +1.0
+const APP_DATE    = '2026-07-07'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
 const saveInfoEl = document.getElementById('saveInfo');
@@ -1250,9 +1251,37 @@ function analyzePreExportMarkdown(sourceText, rootsArr){
     for(const c of (n.children||[])) walk(c);
   };
   (rootsArr||[]).forEach(walk);
-  if(emptyCount) add('warn', `有 ${emptyCount} 個空標題節點`, firstEmpty?'點擊可定位第一個空節點':'', firstEmpty?{nodeId:firstEmpty.id}:{});
-  if(longCount) add('warn', `有 ${longCount} 個節點超過 ${settings.longLimit} 字`, firstLong?`${firstLong.sample}...(${firstLong.len}字);點擊可定位第一個過長節點`:'', firstLong?{nodeId:firstLong.node.id}:{});
+  if(emptyCount) add('warn', `有 ${emptyCount} 個空標題節點`, firstEmpty?'點擊可補成「未命名節點」':'', firstEmpty?{type:'emptyTitle', nodeId:firstEmpty.id}:{});
+  if(longCount) add('warn', `有 ${longCount} 個節點超過 ${settings.longLimit} 字`, firstLong?`${firstLong.sample}...(${firstLong.len}字);點擊可定位並編輯第一個過長節點`:'', firstLong?{type:'longTitle', nodeId:firstLong.node.id}:{});
   return {ok:issues.length===0, issues};
+}
+function locatePreExportNode(node){
+  if(!node) return false;
+  selectOnly(node);
+  render();
+  centerOn(node);
+  if(mdPanelOpen) highlightMdNode(node);
+  return true;
+}
+function applyEmptyTitleQuickFix(node){
+  if(!node || isMeaningfulNonTitleNode(node) || String(node.title||'').trim()) return false;
+  node.title='未命名節點';
+  return true;
+}
+function fixPreExportEmptyTitle(node){
+  if(!node) return false;
+  snapshot();
+  if(!applyEmptyTitleQuickFix(node)) return false;
+  locatePreExportNode(node);
+  setStatusMessage('已補上未命名節點','ok',4500);
+  showToast('已補上未命名節點');
+  return true;
+}
+function editPreExportLongNode(node){
+  if(!locatePreExportNode(node)) return false;
+  setTimeout(()=>{ if(selected===node) editSelected(); }, 0);
+  setStatusMessage('已定位過長節點,可直接編輯','warn',4500);
+  return true;
 }
 function gotoPreExportIssue(issue){
   if(!issue) return;
@@ -1264,10 +1293,9 @@ function gotoPreExportIssue(issue){
   if(issue.nodeId){
     const node=findByIdAll(issue.nodeId);
     if(node){
-      selectOnly(node);
-      render();
-      centerOn(node);
-      if(mdPanelOpen) highlightMdNode(node);
+      if(issue.type==='emptyTitle') fixPreExportEmptyTitle(node);
+      else if(issue.type==='longTitle') editPreExportLongNode(node);
+      else locatePreExportNode(node);
     }
   }
 }
@@ -1298,6 +1326,7 @@ function confirmMarkdownExportQuality(sourceText, rootsArr){
 }
 window.analyzePreExportMarkdown=analyzePreExportMarkdown;
 window.showPreExportReport=showPreExportReport;
+window.applyEmptyTitleQuickFix=applyEmptyTitleQuickFix;
 function htmlBlockTag(line){
   const m=String(line||'').match(/^\s{0,3}<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|>|\/>)/);
   if(!m) return null;
@@ -4578,6 +4607,9 @@ function runMarkdownRuleSelfTest(options={}){
     const preExport=analyzePreExportMarkdown('# 匯出前檢查\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n```js\nx\n', preExportRoots);
     add('匯出前檢查會彙整語法與節點品質', preExport.issues.some(i=>/程式碼區塊/.test(i.message)) && preExport.issues.some(i=>/表格資料列/.test(i.message)) && preExport.issues.some(i=>/空標題/.test(i.message)) && preExport.issues.some(i=>/超過 80 字/.test(i.message)), JSON.stringify(preExport));
     add('匯出前檢查項目可定位行或節點', preExport.issues.some(i=>i.line) && preExport.issues.some(i=>i.nodeId), JSON.stringify(preExport));
+    add('匯出前檢查會標記可快速處理類型', preExport.issues.some(i=>i.type==='emptyTitle') && preExport.issues.some(i=>i.type==='longTitle'), JSON.stringify(preExport));
+    const emptyNode=preExportRoots[0]&&preExportRoots[0].children&&preExportRoots[0].children[0];
+    add('空標題快速修正會補成未命名節點', applyEmptyTitleQuickFix(emptyNode) && emptyNode.title==='未命名節點', emptyNode&&emptyNode.title);
     savePreExportChecks({emptyTitle:false, codeFence:false, table:false, longLimit:0});
     const disabledPreExport=analyzePreExportMarkdown('# T\n```js\nx\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n', preExportRoots);
     add('匯出前檢查設定可關閉提醒項目', disabledPreExport.ok && disabledPreExport.issues.length===0, JSON.stringify(disabledPreExport));
@@ -5240,6 +5272,7 @@ Setext H2 寫法
 - 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片;未保存時會先提醒
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4;未保存時會先提醒
 - 匯出前檢查:匯出 .md 前會提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題
+- 快速修正:檢查報告中點擊空標題可補成「未命名節點」,點擊過長節點可定位並開啟編輯
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
 - 新建:右鍵 → 檔案 → 新建,開一張空白心智圖
