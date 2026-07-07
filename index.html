@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.41
+  版次 Version : 10.42
   最後更新 Updated: 2026-07-07
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-07  v10.42 優化匯出前檢查報告按鈕:重新檢查、安全修正、忽略本次依主次排序並套用不同樣式。
      2026-07-07  v10.41 新增匯出前檢查「忽略本次提醒」:只關閉目前報告,不寫入永久設定。
      2026-07-07  v10.40 新增匯出前檢查「重新檢查」:修正後可直接刷新報告,不必重新啟動匯出流程。
      2026-07-07  v10.39 新增匯出前檢查「全部可安全修正」:目前只批次補空標題,避免自動改寫長文字或語法內容。
@@ -460,6 +461,12 @@
   .report-action{border:1px solid var(--line);background:rgba(255,255,255,.72);color:#64748b;cursor:pointer;border-radius:7px;
     height:28px;padding:0 8px;font-size:12px;font-weight:800;}
   .report-action:hover{background:var(--accent2);color:var(--txt);}
+  .report-action.primary{background:var(--accent);border-color:var(--accent);color:white;}
+  .report-action.primary:hover{background:var(--accent-hover);color:white;}
+  .report-action.safe{background:#ecfdf5;border-color:#bbf7d0;color:#047857;}
+  .report-action.safe:hover{background:#d1fae5;color:#065f46;}
+  .report-action.quiet{background:transparent;border-color:transparent;color:#94a3b8;}
+  .report-action.quiet:hover{background:rgba(148,163,184,.12);color:#64748b;}
   .report-close{border:none;background:transparent;color:#64748b;cursor:pointer;border-radius:6px;width:28px;height:28px;font-size:18px;line-height:1;}
   .report-close:hover{background:var(--accent2);}
   .report-body{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px;font-size:12px;}
@@ -499,6 +506,9 @@
   html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
   html.dark .report-head{ background:#2b313b; color:#cbd5e1; }
   html.dark .report-action{ background:rgba(35,40,48,.72); color:#aeb6c2; }
+  html.dark .report-action.primary{ background:var(--accent); border-color:var(--accent); color:white; }
+  html.dark .report-action.safe{ background:rgba(16,185,129,.14); border-color:rgba(16,185,129,.35); color:#86efac; }
+  html.dark .report-action.quiet{ background:transparent; border-color:transparent; color:#7b8794; }
   html.dark .report-group{ background:rgba(35,40,48,.72); }
   html.dark #status{ background:rgba(20,23,28,.85); color:#aeb6c2; }
   html.dark #status .status-main{ color:#cbd5e1; }
@@ -737,7 +747,7 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_VERSION = '10.41';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.42';        // 版次:小改 +0.1,大改 +1.0
 const APP_DATE    = '2026-07-07'; // 最後更新日期 YYYY-MM-DD
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
 const saveStateEl = document.getElementById('saveState');
@@ -1399,9 +1409,9 @@ function buildPreExportReportActions(report){
     if(!i || i.type!=='emptyTitle') return sum;
     return sum + (Array.isArray(i.nodeIds) && i.nodeIds.length ? i.nodeIds.length : (i.nodeId?1:0));
   },0);
-  const actions=[{label:'重新檢查', title:'重新分析目前心智圖', fn:()=>rerunPreExportReport()}];
-  if(safeFixCount) actions.push({label:`全部可安全修正(${safeFixCount})`, title:'只會批次補空標題', fn:()=>performPreExportSafeFixes(report)});
-  actions.push({label:'忽略本次提醒', title:'只關閉目前報告,不改永久設定', fn:()=>ignoreCurrentPreExportReport(report)});
+  const actions=[{label:'重新檢查', title:'重新分析目前心智圖', variant:'primary', fn:()=>rerunPreExportReport()}];
+  if(safeFixCount) actions.push({label:`全部可安全修正(${safeFixCount})`, title:'只會批次補空標題', variant:'safe', fn:()=>performPreExportSafeFixes(report)});
+  actions.push({label:'忽略本次提醒', title:'只關閉目前報告,不改永久設定', variant:'quiet', fn:()=>ignoreCurrentPreExportReport(report)});
   return actions;
 }
 function showPreExportReport(report){
@@ -4733,6 +4743,8 @@ function runMarkdownRuleSelfTest(options={}){
     const reportActions=buildPreExportReportActions(safeFixReport).map(a=>a.label);
     add('匯出前檢查報告提供重新檢查動作', reportActions.some(label=>label==='重新檢查') && reportActions.some(label=>/^全部可安全修正/.test(label)), reportActions.join(','));
     add('匯出前檢查報告提供本次忽略動作', reportActions.some(label=>label==='忽略本次提醒'), reportActions.join(','));
+    const reportActionMeta=buildPreExportReportActions(safeFixReport);
+    add('匯出前檢查報告按鈕順序與主次清楚', reportActionMeta.map(a=>a.variant).join('|')==='primary|safe|quiet' && reportActionMeta.map(a=>a.label.replace(/\(.+\)$/,'')).join('|')==='重新檢查|全部可安全修正|忽略本次提醒', reportActionMeta.map(a=>`${a.label}:${a.variant}`).join(','));
     savePreExportChecks({emptyTitle:false, codeFence:false, table:false, longLimit:0});
     const disabledPreExport=analyzePreExportMarkdown('# T\n```js\nx\n| A | B |\n|---|---|\n| 1 | 2 | 3 |\n', preExportRoots);
     add('匯出前檢查設定可關閉提醒項目', disabledPreExport.ok && disabledPreExport.issues.length===0, JSON.stringify(disabledPreExport));
@@ -4982,7 +4994,7 @@ function showSelfTestReport(result){
   (result.actions||[]).forEach(action=>{
     if(!action || typeof action.fn!=='function') return;
     const btn=document.createElement('button');
-    btn.className='report-action report-dynamic-action';
+    btn.className='report-action report-dynamic-action'+(action.variant?` ${action.variant}`:'');
     btn.textContent=action.label||'執行';
     btn.title=action.title||action.label||'執行';
     btn.addEventListener('click', action.fn);
@@ -5409,6 +5421,7 @@ Setext H2 寫法
 - 全部可安全修正:匯出前檢查可批次補空標題,不會自動改寫過長文字或語法內容
 - 重新檢查:修正問題後可在報告上直接刷新清單,不用重新執行匯出
 - 忽略本次提醒:只關閉目前這次報告,不會改變永久檢查設定
+- 報告按鈕主次:重新檢查是主要動作,安全修正是輔助動作,忽略本次使用低調樣式
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
