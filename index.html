@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.49
+  版次 Version : 10.50
   最後更新 Updated: 2026-07-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-08  v10.50 浮動工具窗預設改為上方水平整齊排列,並重設位置記憶避免沿用舊散落座標。
      2026-07-08  v10.49 整理功能入口分工:浮動工具窗保留全域高頻操作,文字/清單/圖示改由右鍵選單負責。
      2026-07-08  v10.48 修正浮動工具窗可視範圍:移除強制隱藏規則,讀取舊位置時自動拉回畫面內。
      2026-07-08  v10.47 移除手機版入口與觸控專用流程,工具維持桌面版操作。
@@ -709,7 +710,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.49';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.50';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-08'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -722,7 +723,7 @@ const STORAGE_KEYS=Object.freeze({
   prefVersion:'mm-pref-version',
   markdownPanelOpen:'mm-mdopen',
   markdownPanelWidth:'mm-mdw',
-  floatingWindows:'mm-fwpos5',
+  floatingWindows:'mm-fwpos6',
   darkMode:'mm-dark',
   nodeWrap:'mm-node-wrap',
   lastExportAt:'mm-last-export-at',
@@ -4432,16 +4433,24 @@ function sanitizeFloatWinPositions(){
   return changed;
 }
 
-// 預設排版:靠左單欄、由上往下依重要性排列(檔案→編輯→檢視→配色→標記→主題);
-// 一欄放不下時自動往右開新欄。使用者拖過的視窗(已記憶位置)則沿用。
+const FLOAT_TOP=18, FLOAT_LEFT=18, FLOAT_GAP=34, FLOAT_ROW_GAP=12;
+const FLOAT_ORDER=['fwBrand','fwFile','fwEdit','fwView'];
+// 預設排版:上方水平排列,同列 top 對齊;寬度不足時換到下一排。
+// 使用者拖過的視窗(已記憶位置)則沿用,重設工具列會回到此排列。
 function placeFloatWins(){
-  const gap=10; let x=14, y=12, colW=0;
-  for(const w of document.querySelectorAll('.floatwin')){
+  let x=FLOAT_LEFT, y=FLOAT_TOP, rowH=0;
+  const wins=FLOAT_ORDER.map(id=>document.getElementById(id)).filter(Boolean);
+  for(const w of wins){
     if(fwPos[w.id]){ fwPos[w.id]=applyFloatWinPosition(w, fwPos[w.id]); continue; }
     const ww=w.offsetWidth, wh=w.offsetHeight;
-    if(y>12 && y+wh>window.innerHeight-12){ y=12; x+=colW+gap; colW=0; }
+    if(x>FLOAT_LEFT && x+ww>window.innerWidth-FLOAT_LEFT){
+      x=FLOAT_LEFT;
+      y+=rowH+FLOAT_ROW_GAP;
+      rowH=0;
+    }
     applyFloatWinPosition(w, {left:x, top:y});
-    y+=wh+gap; colW=Math.max(colW, ww);
+    x+=ww+FLOAT_GAP;
+    rowH=Math.max(rowH, wh);
   }
   saveFwPos();
 }
@@ -4996,6 +5005,15 @@ function runCommandPaletteSelfTest(options={}){
     add('浮動工具窗沒有被 CSS 強制隱藏', hiddenFloatWins.length===0, hiddenFloatWins.join(','));
     const floatWinIds=floatWins.map(w=>w.id).sort();
     add('浮動工具窗只保留全域高頻入口', floatWinIds.join('|')==='fwBrand|fwEdit|fwFile|fwView', floatWinIds.join(','));
+    const savedFwPos=fwPos;
+    fwPos={};
+    placeFloatWins();
+    const rowWins=FLOAT_ORDER.map(id=>document.getElementById(id)).filter(Boolean).map(w=>({id:w.id, left:parseFloat(w.style.left)||0, top:parseFloat(w.style.top)||0}));
+    const sameTop=rowWins.every(w=>Math.abs(w.top-FLOAT_TOP)<1);
+    const ordered=rowWins.every((w,i)=>i===0 || w.left>rowWins[i-1].left);
+    add('浮動工具窗預設在上方水平排列', rowWins.length===4 && sameTop && ordered, rowWins.map(w=>`${w.id}:${w.left},${w.top}`).join(' | '));
+    fwPos=savedFwPos;
+    placeFloatWins();
     const sampleFloatWin=document.getElementById('fwFile')||floatWins[0];
     const clamped=sampleFloatWin&&clampFloatWinPosition(sampleFloatWin,{left:999999,top:999999});
     add('浮動工具窗舊座標會拉回畫面內', !!clamped && clamped.left<=Math.max(0, window.innerWidth-46) && clamped.top<=Math.max(0, window.innerHeight-28), clamped?JSON.stringify(clamped):'missing');
