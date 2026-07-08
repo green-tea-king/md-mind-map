@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.45
+  版次 Version : 10.46
   最後更新 Updated: 2026-07-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-08  v10.46 水平分隔線新增 hover/選取拖曳握把提示。
      2026-07-08  v10.45 增加水平分隔線螢幕像素拖曳熱區,改善低縮放時不易抓取。
      2026-07-08  v10.44 分頁標題加入目前版號,顯示為 MD心智圖 v版本號。
      2026-07-07  v10.43 固定瀏覽器分頁標題為 MD心智圖,避免既有分頁顯示未命名。
@@ -601,6 +602,9 @@
   .node.hrnode .ntext{ display:block; width:100%; height:14px; white-space:normal; }
   .node.hrnode .mdhr{ display:block; width:100%; height:14px; opacity:.9; margin:0; overflow:visible; }
   .node.hrnode .mdhrline{ stroke:currentColor; stroke-width:var(--hrw,2px); stroke-linecap:round; stroke-dasharray:6 6; animation:hr-flow 1.5s linear infinite; }
+  .node.hrnode .hrhandle{ opacity:.22; fill:#fff; stroke:currentColor; stroke-width:2; transition:opacity .12s ease, transform .12s ease; }
+  .node.hrnode .hrhandleGrip{ stroke:currentColor; stroke-width:1.6; stroke-linecap:round; opacity:.7; }
+  .node.hrnode:hover .hrhandle,.node.hrnode.sel .hrhandle{ opacity:1; transform:translateX(2px); }
   .node.hrnode:hover .mdhrline,.node.hrnode.sel .mdhrline{ stroke-width:calc(var(--hrw,2px) + .8px); }
   @keyframes hr-flow{ from{stroke-dashoffset:0;} to{stroke-dashoffset:-12;} }
   .node.lv0.hrnode{ --hrw:3px; }
@@ -751,7 +755,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.45';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.46';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-08'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -2066,7 +2070,7 @@ function render(){
       const bd=document.createElement('span'); bd.className='albody'; setTrustedHTML(bd, n.title? inlineMd(n.title):' ', 'alert body');
       tx.appendChild(ti); tx.appendChild(bd);
     }
-    else if(n.kind==='hr'){ setTrustedHTML(tx, '<svg class="mdhr" aria-hidden="true" preserveAspectRatio="none"><line class="mdhrline" x1="0" y1="7" x2="100%" y2="7"/></svg>', 'markdown horizontal rule svg'); d.classList.add('hrnode'); d.title='Markdown 水平分隔線: '+(n.title||'---'); }
+    else if(n.kind==='hr'){ setTrustedHTML(tx, '<svg class="mdhr" aria-hidden="true" preserveAspectRatio="none"><line class="mdhrline" x1="0" y1="7" x2="100%" y2="7"/><g class="hrhandle"><circle cx="9" cy="7" r="6"/><line class="hrhandleGrip" x1="7" y1="4.5" x2="7" y2="9.5"/><line class="hrhandleGrip" x1="11" y1="4.5" x2="11" y2="9.5"/></g></svg>', 'markdown horizontal rule svg'); d.classList.add('hrnode'); d.title='Markdown 水平分隔線: '+(n.title||'---')+'；可抓左側握把拖曳排序'; }
     else if(n.table){ tx.classList.add('hastable'); setTrustedHTML(tx, tableHtml(n.table), 'markdown table'); d.classList.add('tablenode'); }
     else if(n.code!=null){ tx.classList.add('hascode'); setTrustedHTML(tx, '<pre class="mdpre"><code>'+escHtml(n.code)+'</code></pre>', 'markdown code block'); d.classList.add('codenode'); }
     else setTrustedHTML(tx, n.title ? inlineMd(n.title) : ' ', 'node inline markdown');
@@ -4949,6 +4953,7 @@ function runInteractionSelfTest(options={}){
     const hrRect=hrDom&&hrDom.getBoundingClientRect();
     const hitDom=hrRect&&findHrHitNodeDom(hrRect.left+12, hrRect.top+hrRect.height+10);
     add('低縮放分隔線有螢幕像素拖曳熱區', !!(hitDom && hitDom===hrDom), hitDom&&hitDom.dataset.id);
+    add('水平分隔線顯示拖曳握把', !!(hrDom && hrDom.querySelector('.hrhandle') && /握把拖曳/.test(hrDom.title||'')), hrDom&&hrDom.title);
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -5455,6 +5460,7 @@ Setext H2 寫法
 - 報告按鈕主次:重新檢查是主要動作,安全修正是輔助動作,忽略本次使用低調樣式
 - 分頁標題:瀏覽器分頁會顯示 MD心智圖 與目前版號,避免舊分頁顯示未命名
 - 分隔線拖曳:低縮放時,分隔線上下仍保留螢幕像素熱區,比較容易抓取
+- 分隔線握把:滑過或選取分隔線時,左側會顯示拖曳握把提示
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
