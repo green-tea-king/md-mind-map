@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.44
+  版次 Version : 10.45
   最後更新 Updated: 2026-07-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-08  v10.45 增加水平分隔線螢幕像素拖曳熱區,改善低縮放時不易抓取。
      2026-07-08  v10.44 分頁標題加入目前版號,顯示為 MD心智圖 v版本號。
      2026-07-07  v10.43 固定瀏覽器分頁標題為 MD心智圖,避免既有分頁顯示未命名。
      2026-07-07  v10.42 優化匯出前檢查報告按鈕:重新檢查、安全修正、忽略本次依主次排序並套用不同樣式。
@@ -750,7 +751,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.44';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.45';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-08'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -3619,13 +3620,25 @@ function drawGuide(mode, target){
   dropHintEl.style.left=(tr.left-vr.left+tr.width/2)+'px'; dropHintEl.style.top=(tr.top-vr.top)+'px'; dropHintEl.style.display='block';
 }
 function clearGuide(){ clearTrustedHTML(guideEl); guideEl.style.display='none'; dropHintEl.style.display='none'; }
+function findHrHitNodeDom(clientX, clientY){
+  let best=null, bestDist=Infinity;
+  const padY=Math.max(14, 20*scale), padX=10;
+  canvas.querySelectorAll('.node.hrnode').forEach(dom=>{
+    const r=dom.getBoundingClientRect();
+    if(clientX<r.left-padX || clientX>r.right+padX || clientY<r.top-padY || clientY>r.bottom+padY) return;
+    const cy=r.top+r.height/2;
+    const dist=Math.abs(clientY-cy);
+    if(dist<bestDist){ best=dom; bestDist=dist; }
+  });
+  return best;
+}
 
 viewport.addEventListener('mousedown', e=>{
   if(e.button!==0) return;
   // 點連結(無修飾鍵)→ 交給 click 開啟,不進入選取/拖曳
   if(e.target.closest('a.mlink') && !e.shiftKey && !e.ctrlKey && !e.metaKey) return;
   if(e.target.closest('sup.fnref')) return;   // 點腳註標記交給 click 跳轉,不拖曳
-  const nodeDom = e.target.closest('.node');
+  const nodeDom = e.target.closest('.node') || findHrHitNodeDom(e.clientX, e.clientY);
   if(nodeDom && !editing){
     const node = findByIdAll(nodeDom.dataset.id);
     if(e.ctrlKey||e.metaKey){ toggleSelect(node); }      // 加選/取消
@@ -4929,6 +4942,13 @@ function runInteractionSelfTest(options={}){
     svg.setAttribute('width','12000'); svg.setAttribute('height','8000');
     const zmin=minZoomScale();
     add('大型圖縮放下限可低於 20% 且不小於安全下限', zmin>=MIN_ZOOM_SCALE && zmin<0.2, String(zmin));
+    roots=parseMarkdown('# 分隔線熱區自檢\n- 上方節點\n---\n- 下方節點\n');
+    roots.forEach(r=>setParents(r,null));
+    scale=0.08; panX=80; panY=80; render(); applyTransform();
+    const hrDom=canvas.querySelector('.node.hrnode');
+    const hrRect=hrDom&&hrDom.getBoundingClientRect();
+    const hitDom=hrRect&&findHrHitNodeDom(hrRect.left+12, hrRect.top+hrRect.height+10);
+    add('低縮放分隔線有螢幕像素拖曳熱區', !!(hitDom && hitDom===hrDom), hitDom&&hitDom.dataset.id);
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -5434,6 +5454,7 @@ Setext H2 寫法
 - 忽略本次提醒:只關閉目前這次報告,不會改變永久檢查設定
 - 報告按鈕主次:重新檢查是主要動作,安全修正是輔助動作,忽略本次使用低調樣式
 - 分頁標題:瀏覽器分頁會顯示 MD心智圖 與目前版號,避免舊分頁顯示未命名
+- 分隔線拖曳:低縮放時,分隔線上下仍保留螢幕像素熱區,比較容易抓取
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
 - 檢查設定:右鍵 → 檔案 → 匯出前檢查設定,可調整過長節點門檻或關閉部分提醒
 - 開啟:右鍵 → 檔案 → 開啟,或把 .md 檔直接拖進畫面
