@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.57
+  版次 Version : 10.58
   最後更新 Updated: 2026-07-09
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-09  v10.58 右鍵文字格式新增 GFM 警示框與 Markdown 跳脫符號操作,可直接套成 NOTE/TIP 等提示框。
      2026-07-09  v10.57 整理右鍵選單排序:檔案、檢視與節點操作依一般使用頻率排列並加入排序自檢。
      2026-07-09  v10.56 從一般右鍵選單移除診斷/自檢入口,保留在命令面板供維護使用。
      2026-07-09  v10.55 移除檔案/編輯/檢視上方快捷窗,功能統一保留在右鍵選單與命令面板。
@@ -697,7 +698,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.57';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.58';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-09'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -3920,6 +3921,84 @@ function toggleWrap(mk){
   }
   render();
 }
+const ALERT_TYPES=['NOTE','TIP','IMPORTANT','WARNING','CAUTION'];
+const ALERT_MENU_LABELS={NOTE:'📘 套成 NOTE',TIP:'💡 套成 TIP',IMPORTANT:'❗ 套成 IMPORTANT',WARNING:'⚠️ 套成 WARNING',CAUTION:'🛑 套成 CAUTION'};
+const ESCAPE_MENU_CHARS=[
+  {label:'跳脫 *', ch:'*'},
+  {label:'跳脫 _', ch:'_'},
+  {label:'跳脫 `', ch:'`'},
+  {label:'跳脫 #', ch:'#'},
+  {label:'跳脫 >', ch:'>'},
+  {label:'跳脫 -', ch:'-'}
+];
+function canFormatAsAlertNode(node){
+  return !!(node && node.parent && node.kind!=='hr' && !node.table && node.code==null && !node.htmlRaw && !node.refdef && !node.fndef && node.kind!=='preamble');
+}
+function formatAlertNode(node, type){
+  if(!canFormatAsAlertNode(node)) return false;
+  node.alert=String(type||'NOTE').toUpperCase();
+  node.kind='alert';
+  delete node.quote;
+  delete node.ordered;
+  delete node.orderedNum;
+  delete node.orderedMarker;
+  delete node.checked;
+  delete node.icon;
+  return true;
+}
+function removeAlertNodeFormat(node){
+  if(!node || !node.alert) return false;
+  delete node.alert;
+  if(node.kind==='alert') node.kind='ul';
+  return true;
+}
+function applyAlertType(type){
+  if(!selection.size){ setStatusMessage('請先點選節點再套用提示框','warn',3200); return; }
+  snapshot();
+  let changed=0, skipped=0;
+  for(const n of selection){ if(formatAlertNode(n, type)) changed++; else skipped++; }
+  if(!changed){ undo(); setStatusMessage('中心主題或特殊節點不能套成提示框','warn',4200); return; }
+  render();
+  setStatusMessage(`已套成 ${String(type).toUpperCase()} 提示框${skipped?'；部分特殊節點略過':''}`,'ok',3600);
+}
+function removeAlertFormat(){
+  if(!selection.size){ setStatusMessage('請先點選節點再移除提示框','warn',3200); return; }
+  snapshot();
+  let changed=0;
+  for(const n of selection){ if(removeAlertNodeFormat(n)) changed++; }
+  if(!changed){ undo(); setStatusMessage('選取節點不是提示框','warn',3200); return; }
+  render();
+  setStatusMessage('已移除提示框格式','ok',3200);
+}
+function escapeMarkdownCharInText(text, ch){
+  const target=String(ch||'');
+  if(!target) return String(text||'');
+  let out='', s=String(text||'');
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(c===target){
+      let slashCount=0;
+      for(let j=i-1;j>=0 && s[j]==='\\';j--) slashCount++;
+      if(slashCount%2===0) out+='\\';
+    }
+    out+=c;
+  }
+  return out;
+}
+function escapeSelectedMarkdownChar(ch){
+  if(!selection.size){ setStatusMessage('請先點選節點再跳脫符號','warn',3200); return; }
+  snapshot();
+  let changed=0;
+  for(const n of selection){
+    if(n.table || n.code!=null || n.kind==='hr' || n.refdef || n.fndef || n.htmlRaw) continue;
+    const before=String(n.title||'');
+    const after=escapeMarkdownCharInText(before, ch);
+    if(after!==before){ n.title=after; changed++; }
+  }
+  if(!changed){ undo(); setStatusMessage(`選取文字沒有需要跳脫的 ${ch} 符號`,'warn',3200); return; }
+  render();
+  setStatusMessage(`已跳脫 ${ch} 符號`,'ok',3200);
+}
 // 連結:把選取節點包成 [文字](網址)(已是連結則換網址)
 function addLink(){
   if(!selection.size){ setStatusMessage('請先點選節點再加連結','warn',3200); return; }
@@ -4264,6 +4343,19 @@ function buildStructureMenuItems(node){
     {label:'⬆ 提升為中心主題', fn:detachToRoot, disabled:!(node && node.parent)}
   ];
 }
+function buildTextFormatMenuItems(){
+  const alertSub=ALERT_TYPES.map(type=>({label:ALERT_MENU_LABELS[type], fn:()=>applyAlertType(type)}));
+  alertSub.push('—', {label:'✕ 移除提示框格式', fn:removeAlertFormat});
+  const escapeSub=ESCAPE_MENU_CHARS.map(item=>({label:item.label, fn:()=>escapeSelectedMarkdownChar(item.ch)}));
+  return [
+    {label:'粗體 **', key:'⌃B', fn:()=>toggleWrap('**')},
+    {label:'斜體 *', key:'⌃I', fn:()=>toggleWrap('*')},
+    {label:'刪除線 ~~', fn:()=>toggleWrap('~~')},
+    {label:'🔔 警示框 / 提示框', sub:alertSub},
+    {label:'\\ 跳脫符號', sub:escapeSub},
+    {label:'🔗 連結…', fn:addLink},
+  ];
+}
 viewport.addEventListener('contextmenu', e=>{
   e.preventDefault();
   const nodeDom = roots.length ? e.target.closest('.node') : null;
@@ -4275,12 +4367,7 @@ viewport.addEventListener('contextmenu', e=>{
     const node=findByIdAll(nodeDom.dataset.id);
     if(!selection.has(node)){ selectOnly(node); render(); }
     const multi = selection.size>1;
-    const fmtSub = [
-      {label:'粗體 **', key:'⌃B', fn:()=>toggleWrap('**')},
-      {label:'斜體 *', key:'⌃I', fn:()=>toggleWrap('*')},
-      {label:'刪除線 ~~', fn:()=>toggleWrap('~~')},
-      {label:'🔗 連結…', fn:addLink},
-    ];
+    const fmtSub = buildTextFormatMenuItems();
     const listSub = [
       {label:'☑ 待辦', fn:toggleTodo},
       {label:'1. 有序清單', fn:toggleOrdered},
@@ -4593,6 +4680,15 @@ function runMarkdownRuleSelfTest(options={}){
     add('圖片支援 title', /title="圖片說明"/.test(inlineMd('![alt](data:image/png;base64,AA== "圖片說明")')), inlineMd('![alt](data:image/png;base64,AA== "圖片說明")'));
     add('多反引號 code span 不吃掉內部單反引號', /<code class="mdcode">a ` b<\/code>/.test(inlineMd('``a ` b``')), inlineMd('``a ` b``'));
     add('跳脫星號不會觸發斜體', !/<em>/.test(inlineMd('\\*不是斜體\\*')), inlineMd('\\*不是斜體\\*'));
+    const alertRoot=makeNode('警示框操作測試');
+    const alertNode=makeNode('這是提示內容');
+    alertNode.parent=alertRoot; alertRoot.children=[alertNode];
+    const alertApplied=formatAlertNode(alertNode,'TIP');
+    out=toMarkdown([alertRoot]);
+    add('右鍵提示框操作會輸出 GFM alert Markdown', alertApplied && /^> \[!TIP\]$/m.test(out) && /^> 這是提示內容$/m.test(out), out);
+    add('移除提示框格式會回到一般清單節點', removeAlertNodeFormat(alertNode) && !alertNode.alert && alertNode.kind==='ul', JSON.stringify({kind:alertNode.kind, alert:alertNode.alert}));
+    const escapedText=escapeMarkdownCharInText('*星號* _底線_ `code` #標題 >引用 -清單','*');
+    add('右鍵跳脫符號會補反斜線且不重複補', escapedText==='\\*星號\\* _底線_ `code` #標題 >引用 -清單' && escapeMarkdownCharInText(escapedText,'*')===escapedText, escapedText);
     parsed=parseMarkdown('# T\n<!-- 註解\n仍是註解 -->\n');
     out=toMarkdown(parsed);
     add('HTML 註解區塊匯出保留', /<!-- 註解\n仍是註解 -->/.test(out), out);
@@ -5012,6 +5108,8 @@ function runCommandPaletteSelfTest(options={}){
     sampleStructureNode.children=[sampleStructureChild];
     const structureLabels=orderedLabels(buildStructureMenuItems(sampleStructureNode));
     add('節點操作排序符合編輯頻率', orderedBefore(structureLabels, ['同層節點','子節點','父節點','收合','提升為中心主題']), structureLabels.join(','));
+    const textFormatLabels=menuLabels(buildTextFormatMenuItems());
+    add('文字格式右鍵包含提示框與跳脫符號', ['套成 NOTE','套成 TIP','套成 IMPORTANT','套成 WARNING','套成 CAUTION','移除提示框','跳脫 *','跳脫 _','跳脫 `','跳脫 #','跳脫 >','跳脫 -'].every(needle=>textFormatLabels.some(label=>String(label).includes(needle))), textFormatLabels.join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     const retiredCompactUiPattern=new RegExp('小螢幕|'+'mobile','i');
     add('桌面版不包含小螢幕入口', !document.getElementById('mobile'+'MenuBtn') && !commands.some(c=>retiredCompactUiPattern.test(c.label+' '+(c.aliases||''))) && typeof window['runMindMap'+'MobileEntrySelfTest']==='undefined', commands.map(c=>c.label).join(','));
