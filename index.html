@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.54
+  版次 Version : 10.55
   最後更新 Updated: 2026-07-09
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-09  v10.55 移除檔案/編輯/檢視上方快捷窗,功能統一保留在右鍵選單與命令面板。
      2026-07-09  v10.54 新增專案規範與 UI 歸屬自檢:右鍵是完整功能入口,上方工具列只作快捷入口。
      2026-07-08  v10.53 搜尋輸入列整合進搜尋工具窗,取消上下兩套搜尋入口。
      2026-07-08  v10.52 搜尋改為獨立上方工具窗,檢視工具窗只保留版面相關操作。
@@ -653,24 +654,6 @@
 <!-- 浮動工具視窗(可拖曳標題列移動,點 — 收合) -->
 <div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span><span id="saveInfo" class="save-info"></span></div></div>
 
-<div class="floatwin" id="fwFile">
-  <div class="fwhead">檔案<button class="fwcollapse" title="收合">–</button></div>
-  <div class="fwbody">
-    <button class="tb" id="btnNew" title="新建心智圖">✨ 新建</button>
-    <button class="tb primary" id="btnOpen" title="開啟 Markdown (.md)">📂 開啟</button>
-    <button class="tb" id="btnExport" title="匯出 Markdown(純原生,不含顏色)">💾 匯出</button>
-  </div>
-</div>
-
-<div class="floatwin" id="fwEdit">
-  <div class="fwhead">編輯<button class="fwcollapse" title="收合">–</button></div>
-  <div class="fwbody">
-    <button class="tb" id="btnParent" title="新增父節點(在選取節點上方插入一層)">＋ 父節點 <small>⇧Tab</small></button>
-    <button class="tb" id="btnSibling" title="新增同層節點">＋ 同層 <small>Enter</small></button>
-    <button class="tb" id="btnChild" title="新增子節點">＋ 子節點 <small>Tab</small></button>
-  </div>
-</div>
-
 <div class="floatwin" id="fwSearch">
   <div class="fwhead">搜尋<button class="fwcollapse" title="收合">–</button></div>
   <div class="fwbody">
@@ -685,15 +668,6 @@
       <div id="searchHint">輸入文字搜尋節點</div>
       <div id="searchList"></div>
     </div>
-  </div>
-</div>
-
-<div class="floatwin" id="fwView">
-  <div class="fwhead">檢視<button class="fwcollapse" title="收合">–</button></div>
-  <div class="fwbody">
-    <button class="tb" id="btnFit" title="置中縮放">🎯 置中</button>
-    <button class="tb" id="btnDark" title="切換 淺色 / 深色 介面">🌙 深色</button>
-    <button class="tb" id="btnResetUI" title="把工具視窗位置與收合狀態還原成預設">↺ 工具列歸位</button>
   </div>
 </div>
 
@@ -721,7 +695,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.54';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.55';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-09'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -734,7 +708,7 @@ const STORAGE_KEYS=Object.freeze({
   prefVersion:'mm-pref-version',
   markdownPanelOpen:'mm-mdopen',
   markdownPanelWidth:'mm-mdw',
-  floatingWindows:'mm-fwpos9',
+  floatingWindows:'mm-fwpos10',
   darkMode:'mm-dark',
   nodeWrap:'mm-node-wrap',
   lastExportAt:'mm-last-export-at',
@@ -3815,7 +3789,7 @@ function moveSel(key){
 
 //===================== 匯入 / 匯出 / 新建 / 置中 =====================
 const fileInput=document.getElementById('file');
-document.getElementById('btnOpen').onclick=()=>fileInput.click();
+function openMarkdownFile(){ fileInput.click(); }
 fileInput.onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); fileInput.value=''; };
 let savedMarkdown=null;
 let lastExportAt=storageGet(STORAGE_KEYS.lastExportAt, '', 'read last export time');
@@ -3916,15 +3890,10 @@ function exportHTML(){
   _dl(new Blob([html],{type:'text/html;charset=utf-8'}), _expName('html'));
   showToast('HTML 單檔已匯出');
 }
-document.getElementById('btnExport').onclick=()=>exportMd();
 window.exportJPG=exportJPG; window.exportPDF=exportPDF; window.exportHTML=exportHTML;
-document.getElementById('btnNew').onclick=()=>{ flushPendingMdText(); if(!confirmReplace()) return; const r0=makeNode('中心主題'); roots=[r0];
+function createNewMindMap(){ flushPendingMdText(); if(!confirmReplace()) return; const r0=makeNode('中心主題'); roots=[r0];
   ['分支一','分支二','分支三'].forEach(t=>{ const c=makeNode(t); c.parent=r0; r0.children.push(c); });
-  history.length=0; redoStack.length=0; selectOnly(r0); currentName=null; currentFileName=null; originalMarkdownText=null; savedMarkdown=null; clearSearch(); render(); fit(); };
-document.getElementById('btnChild').onclick=addChild;
-document.getElementById('btnSibling').onclick=addSibling;
-document.getElementById('btnParent').onclick=addParent;
-document.getElementById('btnFit').onclick=fit;
+  history.length=0; redoStack.length=0; selectOnly(r0); currentName=null; currentFileName=null; originalMarkdownText=null; savedMarkdown=null; clearSearch(); render(); fit(); }
 
 // 圖示 / 待辦
 const ICONS=['⭐','🔥','✅','❗','❓','💡','📌','🎯','👍','❤️'];
@@ -4153,10 +4122,9 @@ const cmdInputEl=document.getElementById('cmdInput');
 const cmdListEl=document.getElementById('cmdList');
 let cmdActiveIndex=0, cmdMatches=[];
 function getCommandItems(){
-  const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
   return [
-    {label:'新建', hint:'檔案', aliases:'new blank', fn:clickBtn('btnNew')},
-    {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:clickBtn('btnOpen')},
+    {label:'新建', hint:'檔案', aliases:'new blank', fn:createNewMindMap},
+    {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:openMarkdownFile},
     {label:'匯出 Markdown', hint:'保存原始稿', aliases:'save export md original source', fn:exportMd},
     {label:'匯出 HTML 單檔', hint:'備份/分享', aliases:'html export single file offline backup not source save', fn:exportHTML},
     {label:'匯出 JPG', hint:'圖面', aliases:'image export not source save', fn:exportJPG},
@@ -4165,6 +4133,7 @@ function getCommandItems(){
     {label:'置中縮放', hint:'檢視', aliases:'fit center zoom', fn:fit},
     {label:'深色介面', hint:'外觀', aliases:'dark mode', fn:()=>applyDark(true)},
     {label:'淺色介面', hint:'外觀', aliases:'light mode', fn:()=>applyDark(false)},
+    {label:'工具列歸位', hint:'檢視', aliases:'reset floating toolbar ui', fn:resetFloatWins},
     {label:'節點寬度 40 字', hint:'版面', aliases:'wrap narrow', fn:()=>applyNodeWrapWidth('narrow',true)},
     {label:'節點寬度 50 字', hint:'版面', aliases:'wrap normal', fn:()=>applyNodeWrapWidth('normal',true)},
     {label:'節點寬度 60 字', hint:'版面', aliases:'wrap wide', fn:()=>applyNodeWrapWidth('wide',true)},
@@ -4242,11 +4211,10 @@ function buildPreExportCheckMenu(){
 }
 function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
-  const clickBtn = id => ()=>{ const el=document.getElementById(id); if(el) el.click(); };
   const fileSub = [
     {header: hasUnsavedChanges() ? '未匯出:請先用 .md 保存原始稿' : '已匯出:Markdown 原稿已保存'},
-    {label:'✨ 新建', fn:clickBtn('btnNew')},
-    {label:'📂 開啟 .md…', fn:()=>fileInput.click()},
+    {label:'✨ 新建', fn:createNewMindMap},
+    {label:'📂 開啟 .md…', fn:openMarkdownFile},
     {label:'💾 匯出 .md', key:'保存原始稿', fn:exportMd},
     {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
     {label:'🖼 匯出 JPG', key:'圖面', fn:exportJPG},
@@ -4258,6 +4226,7 @@ function buildMainMenuItems(){
     {label:'🎯 置中', fn:fit},
     {label:'🔍 搜尋', key:'⌃F', fn:openSearch},
     {label:'⌘ 命令面板', key:'⌃K', fn:runCommandSearch},
+    {label:'↺ 工具列歸位', fn:resetFloatWins},
     {label:'↔ 節點寬度', sub:[
       {label:'40 字', fn:()=>applyNodeWrapWidth('narrow', true)},
       {label:'50 字', fn:()=>applyNodeWrapWidth('normal', true)},
@@ -4445,7 +4414,7 @@ function sanitizeFloatWinPositions(){
 }
 
 const FLOAT_TOP=14, FLOAT_LEFT=14, FLOAT_GAP=14, FLOAT_ROW_GAP=10;
-const FLOAT_ORDER=['fwBrand','fwFile','fwEdit','fwSearch','fwView'];
+const FLOAT_ORDER=['fwBrand','fwSearch'];
 // 預設排版:上方水平排列,同列 top 對齊;寬度不足時換到下一排。
 // 使用者拖過的視窗(已記憶位置)則沿用,重設工具列會回到此排列。
 function placeFloatWins(){
@@ -4496,7 +4465,6 @@ function resetFloatWins(){
   document.querySelectorAll('.fwcollapse').forEach(b=>{ b.textContent='–'; b.title='收合'; });
   placeFloatWins();
 }
-document.getElementById('btnResetUI').onclick=resetFloatWins;
 // 淺色 / 深色 介面切換(預設跟隨系統,手動切換會記住)
 function applyDark(on){ document.documentElement.classList.toggle('dark', on);
   const b=document.getElementById('btnDark'); if(b){ b.textContent = on ? '☀️ 淺色' : '🌙 深色'; b.title = on ? '切換為淺色介面' : '切換為深色介面'; }
@@ -4511,7 +4479,6 @@ function toggleDebugLayout(){
 }
 (function(){ let pref=storageGet(STORAGE_KEYS.darkMode, null, 'read dark mode preference');
   applyDark(pref==='1'); })();   // 預設淺色;使用者手動切換才記住深色
-document.getElementById('btnDark').onclick=()=>applyDark(!document.documentElement.classList.contains('dark'));
 loadNodeWrapWidth();
 placeFloatWins();
 let _viewportRelayoutT=null;
@@ -5017,8 +4984,8 @@ function runCommandPaletteSelfTest(options={}){
     });
     const rightClickLabels=[...menuLabels(fileSub),...menuLabels(viewSub),...menuLabels(diagSub)];
     const hasRightClickLabel=needle=>rightClickLabels.some(label=>String(label).includes(needle));
-    add('右鍵選單是完整功能入口', hasRightClickLabel('新建') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('匯出 HTML') && hasRightClickLabel('匯出 JPG') && hasRightClickLabel('匯出 PDF') && hasRightClickLabel('搜尋') && hasRightClickLabel('置中') && hasRightClickLabel('深色') && hasRightClickLabel('命令面板') && hasRightClickLabel('完整自檢'), rightClickLabels.join(','));
-    add('快捷入口必須仍存在於右鍵', !!document.getElementById('fwSearch') && hasRightClickLabel('搜尋') && !!document.getElementById('fwFile') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && !!document.getElementById('fwView') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')), rightClickLabels.join(','));
+    add('右鍵選單是完整功能入口', hasRightClickLabel('新建') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('匯出 HTML') && hasRightClickLabel('匯出 JPG') && hasRightClickLabel('匯出 PDF') && hasRightClickLabel('搜尋') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')) && hasRightClickLabel('命令面板') && hasRightClickLabel('完整自檢'), rightClickLabels.join(','));
+    add('快捷入口必須仍存在於右鍵', !!document.getElementById('fwSearch') && hasRightClickLabel('搜尋') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')), rightClickLabels.join(','));
     add('檔案選單包含匯出前檢查設定', fileSub.some(i=>i.label==='⚙ 匯出前檢查設定' && i.sub && i.sub.length>=6), fileSub.map(i=>i.label||i.header||i).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     const retiredCompactUiPattern=new RegExp('小螢幕|'+'mobile','i');
@@ -5027,7 +4994,7 @@ function runCommandPaletteSelfTest(options={}){
     const hiddenFloatWins=floatWins.filter(w=>getComputedStyle(w).display==='none').map(w=>w.id);
     add('浮動工具窗沒有被 CSS 強制隱藏', hiddenFloatWins.length===0, hiddenFloatWins.join(','));
     const floatWinIds=floatWins.map(w=>w.id).sort();
-    add('浮動工具窗只保留全域高頻入口', floatWinIds.join('|')==='fwBrand|fwEdit|fwFile|fwSearch|fwView', floatWinIds.join(','));
+    add('浮動工具窗只保留全域高頻入口', floatWinIds.join('|')==='fwBrand|fwSearch', floatWinIds.join(','));
     const savedFwPos=fwPos;
     fwPos={};
     placeFloatWins();
@@ -5047,12 +5014,11 @@ function runCommandPaletteSelfTest(options={}){
       && rows.every(r=>r.wins[0] && Math.abs(r.wins[0].left-FLOAT_LEFT)<1)
       && rowGaps.every(g=>Math.abs(g-FLOAT_GAP)<=1);
     const searchWin=document.getElementById('fwSearch');
-    const viewWin=document.getElementById('fwView');
-    add('搜尋輸入列整合在搜尋工具窗且檢視不再包含搜尋', !!(searchWin && searchWin.querySelector('#searchBar') && searchWin.querySelector('#searchWrap') && !document.getElementById('btnSearch') && viewWin && !viewWin.querySelector('#searchBar')), '');
-    add('浮動工具窗預設在上方緊密等距排列', rowWins.length===5 && rowLayoutOk, rows.map(r=>r.wins.map(w=>`${w.id}:${w.left},${w.top},w${w.width}`).join(' | ')).join(' / ')+' gaps='+rowGaps.join(','));
+    add('搜尋輸入列整合在搜尋工具窗且檔案編輯檢視改走右鍵', !!(searchWin && searchWin.querySelector('#searchBar') && searchWin.querySelector('#searchWrap') && !document.getElementById('btnSearch') && !document.getElementById('fwFile') && !document.getElementById('fwEdit') && !document.getElementById('fwView')), '');
+    add('浮動工具窗預設在上方緊密等距排列', rowWins.length===2 && rowLayoutOk, rows.map(r=>r.wins.map(w=>`${w.id}:${w.left},${w.top},w${w.width}`).join(' | ')).join(' / ')+' gaps='+rowGaps.join(','));
     fwPos=savedFwPos;
     placeFloatWins();
-    const sampleFloatWin=document.getElementById('fwFile')||floatWins[0];
+    const sampleFloatWin=document.getElementById('fwSearch')||floatWins[0];
     const clamped=sampleFloatWin&&clampFloatWinPosition(sampleFloatWin,{left:999999,top:999999});
     add('浮動工具窗舊座標會拉回畫面內', !!clamped && clamped.left<=Math.max(0, window.innerWidth-46) && clamped.top<=Math.max(0, window.innerHeight-28), clamped?JSON.stringify(clamped):'missing');
     add('命令面板 DOM 存在', !!(cmdPaletteEl && cmdInputEl && cmdListEl), '');
