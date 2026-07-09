@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.55
+  版次 Version : 10.56
   最後更新 Updated: 2026-07-09
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-09  v10.56 從一般右鍵選單移除診斷/自檢入口,保留在命令面板供維護使用。
      2026-07-09  v10.55 移除檔案/編輯/檢視上方快捷窗,功能統一保留在右鍵選單與命令面板。
      2026-07-09  v10.54 新增專案規範與 UI 歸屬自檢:右鍵是完整功能入口,上方工具列只作快捷入口。
      2026-07-08  v10.53 搜尋輸入列整合進搜尋工具窗,取消上下兩套搜尋入口。
@@ -695,7 +696,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.55';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.56';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-09'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -4311,7 +4312,6 @@ viewport.addEventListener('contextmenu', e=>{
       {header:'工具'},
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
-      {label:'🧪 診斷/自檢', sub:diagSub},
     ];
   } else {
     items=[
@@ -4322,7 +4322,6 @@ viewport.addEventListener('contextmenu', e=>{
       {header:'工具'},
       {label:'📄 檔案', sub:fileSub},
       {label:'👁 檢視', sub:viewSub},
-      {label:'🧪 診斷/自檢', sub:diagSub},
       '—',
       {header:'展開'},
       {label:'▼ 全部展開', fn:()=>setAllCollapsed(false)},
@@ -4982,9 +4981,12 @@ function runCommandPaletteSelfTest(options={}){
       if(item.sub) labels.push(...menuLabels(item.sub));
       return labels;
     });
-    const rightClickLabels=[...menuLabels(fileSub),...menuLabels(viewSub),...menuLabels(diagSub)];
+    const rightClickLabels=[...menuLabels(fileSub),...menuLabels(viewSub)];
+    const diagnosticLabels=menuLabels(diagSub);
     const hasRightClickLabel=needle=>rightClickLabels.some(label=>String(label).includes(needle));
-    add('右鍵選單是完整功能入口', hasRightClickLabel('新建') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('匯出 HTML') && hasRightClickLabel('匯出 JPG') && hasRightClickLabel('匯出 PDF') && hasRightClickLabel('搜尋') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')) && hasRightClickLabel('命令面板') && hasRightClickLabel('完整自檢'), rightClickLabels.join(','));
+    add('右鍵選單是一般功能入口', hasRightClickLabel('新建') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('匯出 HTML') && hasRightClickLabel('匯出 JPG') && hasRightClickLabel('匯出 PDF') && hasRightClickLabel('搜尋') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')) && hasRightClickLabel('命令面板'), rightClickLabels.join(','));
+    add('診斷自檢不顯示在一般右鍵選單', !rightClickLabels.some(label=>String(label).includes('診斷') || String(label).includes('自檢')), rightClickLabels.join(','));
+    add('診斷自檢保留在命令面板', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='右鍵選單自檢') && diagnosticLabels.some(label=>String(label).includes('完整自檢')), diagnosticLabels.join(','));
     add('快捷入口必須仍存在於右鍵', !!document.getElementById('fwSearch') && hasRightClickLabel('搜尋') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')), rightClickLabels.join(','));
     add('檔案選單包含匯出前檢查設定', fileSub.some(i=>i.label==='⚙ 匯出前檢查設定' && i.sub && i.sub.length>=6), fileSub.map(i=>i.label||i.header||i).join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
@@ -5375,7 +5377,7 @@ Setext H2 寫法
 - 搜尋:Ctrl+F,Enter 跳下一個、Shift+Enter 跳上一個
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
-- 診斷/自檢:右鍵 → 診斷/自檢,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、分隔線位置、命令面板、右鍵選單、搜尋體驗、鍵盤操作與完整流程
+- 診斷/自檢:Ctrl+K 開啟命令面板後搜尋「自檢」,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、分隔線位置、命令面板、右鍵選單、搜尋體驗、鍵盤操作與完整流程
 - 自檢報告:執行完整自檢後會顯示報告面板,列出各組通過狀態與失敗原因
 - 匯出自檢:會確認分隔線、表格、HTML、JPG/PDF 結構都有被匯出
 ## ⌨️ 快速鍵一覽
