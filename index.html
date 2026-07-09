@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.56
+  版次 Version : 10.57
   最後更新 Updated: 2026-07-09
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-09  v10.57 整理右鍵選單排序:檔案、檢視與節點操作依一般使用頻率排列並加入排序自檢。
      2026-07-09  v10.56 從一般右鍵選單移除診斷/自檢入口,保留在命令面板供維護使用。
      2026-07-09  v10.55 移除檔案/編輯/檢視上方快捷窗,功能統一保留在右鍵選單與命令面板。
      2026-07-09  v10.54 新增專案規範與 UI 歸屬自檢:右鍵是完整功能入口,上方工具列只作快捷入口。
@@ -696,7 +697,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.56';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.57';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-09'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -4214,28 +4215,28 @@ function buildMainMenuItems(){
   const isDark = document.documentElement.classList.contains('dark');
   const fileSub = [
     {header: hasUnsavedChanges() ? '未匯出:請先用 .md 保存原始稿' : '已匯出:Markdown 原稿已保存'},
-    {label:'✨ 新建', fn:createNewMindMap},
     {label:'📂 開啟 .md…', fn:openMarkdownFile},
+    {label:'✨ 新建', fn:createNewMindMap},
     {label:'💾 匯出 .md', key:'保存原始稿', fn:exportMd},
-    {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
     {label:'🖼 匯出 JPG', key:'圖面', fn:exportJPG},
     {label:'📄 匯出 PDF(A4)', key:'圖面', fn:exportPDF},
+    {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
     {label:'⚙ 匯出前檢查設定', sub:buildPreExportCheckMenu()},
   ];
   const viewSub = [
-    {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
     {label:'🎯 置中', fn:fit},
     {label:'🔍 搜尋', key:'⌃F', fn:openSearch},
-    {label:'⌘ 命令面板', key:'⌃K', fn:runCommandSearch},
-    {label:'↺ 工具列歸位', fn:resetFloatWins},
+    {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
+    {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
     {label:'↔ 節點寬度', sub:[
       {label:'40 字', fn:()=>applyNodeWrapWidth('narrow', true)},
       {label:'50 字', fn:()=>applyNodeWrapWidth('normal', true)},
       {label:'60 字', fn:()=>applyNodeWrapWidth('wide', true)},
       {label:'不自動換行', fn:()=>applyNodeWrapWidth('none', true)}
     ]},
+    {label:'⌘ 命令面板', key:'⌃K', fn:runCommandSearch},
+    {label:'↺ 工具列歸位', fn:resetFloatWins},
     {label: debugLayout?'🧪 關閉版面除錯':'🧪 版面除錯', fn:toggleDebugLayout},
-    {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
   ];
   const diagSub = [
     {label:'📋 查看自檢報告', fn:openSelfTestReport},
@@ -4253,6 +4254,15 @@ function buildMainMenuItems(){
     {label:'📋 複製診斷資訊', fn:copyDiagnostics},
   ];
   return {fileSub, viewSub, diagSub};
+}
+function buildStructureMenuItems(node){
+  return [
+    {label:'＋ 同層節點', key:'Enter', fn:addSibling},
+    {label:'＋ 子節點', key:'Tab', fn:addChild},
+    {label:'＋ 父節點', key:'⇧Tab', fn:addParent},
+    {label: node && node.collapsed ? '▶ 展開' : '▼ 收合', fn:()=>toggleNodeCollapsed(node), disabled:!(node && hasBranchChildren(node))},
+    {label:'⬆ 提升為中心主題', fn:detachToRoot, disabled:!(node && node.parent)}
+  ];
 }
 viewport.addEventListener('contextmenu', e=>{
   e.preventDefault();
@@ -4278,13 +4288,7 @@ viewport.addEventListener('contextmenu', e=>{
     ];
     const iconSub = ICONS.map(ic=>({label:ic+'　加圖示', fn:()=>setIcon(ic)}));
     iconSub.push('—', {label:'✕ 清除圖示/待辦', fn:clearIconAndTodo});
-    const structureSub=[
-      {label:'＋ 子節點', key:'Tab', fn:addChild},
-      {label:'＋ 同層節點', key:'Enter', fn:addSibling},
-      {label:'＋ 父節點', key:'⇧Tab', fn:addParent},
-      {label:'⬆ 提升為中心主題', fn:detachToRoot, disabled:!node.parent},
-      {label: node.collapsed?'▶ 展開':'▼ 收合', fn:()=>toggleNodeCollapsed(node), disabled:!hasBranchChildren(node)}
-    ];
+    const structureSub=buildStructureMenuItems(node);
     const dividerSub=[
       {label:'─ 插入分隔線在上方', fn:()=>insertHrNearNode(node,'before')},
       {label:'─ 插入分隔線在下方', fn:()=>insertHrNearNode(node,'after')}
@@ -4989,6 +4993,25 @@ function runCommandPaletteSelfTest(options={}){
     add('診斷自檢保留在命令面板', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='右鍵選單自檢') && diagnosticLabels.some(label=>String(label).includes('完整自檢')), diagnosticLabels.join(','));
     add('快捷入口必須仍存在於右鍵', !!document.getElementById('fwSearch') && hasRightClickLabel('搜尋') && hasRightClickLabel('開啟') && hasRightClickLabel('匯出 .md') && hasRightClickLabel('置中') && (hasRightClickLabel('深色') || hasRightClickLabel('淺色')), rightClickLabels.join(','));
     add('檔案選單包含匯出前檢查設定', fileSub.some(i=>i.label==='⚙ 匯出前檢查設定' && i.sub && i.sub.length>=6), fileSub.map(i=>i.label||i.header||i).join(','));
+    const orderedLabels=list=>list.filter(i=>i && typeof i!=='string' && i.label).map(i=>String(i.label));
+    const labelIndex=(labels, needle)=>labels.findIndex(label=>label.includes(needle));
+    const orderedBefore=(labels, needles)=>needles.every((needle, idx)=>{
+      const current=labelIndex(labels, needle);
+      const previous=idx===0 ? -1 : labelIndex(labels, needles[idx-1]);
+      return current>=0 && current>previous;
+    });
+    const fileLabels=orderedLabels(fileSub);
+    add('檔案選單排序符合一般使用流程', orderedBefore(fileLabels, ['開啟','新建','匯出 .md','匯出 JPG','匯出 PDF','匯出 HTML','匯出前檢查']), fileLabels.join(','));
+    const viewLabels=orderedLabels(viewSub);
+    const themeNeedle=viewLabels.some(label=>label.includes('深色')) ? '深色' : '淺色';
+    add('檢視選單排序符合常用優先', orderedBefore(viewLabels, ['置中','搜尋','原始 Markdown',themeNeedle,'節點寬度','命令面板','工具列歸位','版面除錯']), viewLabels.join(','));
+    const sampleStructureNode=makeNode('節點操作排序樣本');
+    const sampleStructureChild=makeNode('子節點');
+    sampleStructureChild.parent=sampleStructureNode;
+    sampleStructureNode.parent={};
+    sampleStructureNode.children=[sampleStructureChild];
+    const structureLabels=orderedLabels(buildStructureMenuItems(sampleStructureNode));
+    add('節點操作排序符合編輯頻率', orderedBefore(structureLabels, ['同層節點','子節點','父節點','收合','提升為中心主題']), structureLabels.join(','));
     add('命令清單不再提供方向切換', !commands.some(c=>/切換方向|橫式|直式/.test(c.label+' '+(c.aliases||''))), commands.map(c=>c.label).join(','));
     const retiredCompactUiPattern=new RegExp('小螢幕|'+'mobile','i');
     add('桌面版不包含小螢幕入口', !document.getElementById('mobile'+'MenuBtn') && !commands.some(c=>retiredCompactUiPattern.test(c.label+' '+(c.aliases||''))) && typeof window['runMindMap'+'MobileEntrySelfTest']==='undefined', commands.map(c=>c.label).join(','));
