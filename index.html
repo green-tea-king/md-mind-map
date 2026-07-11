@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.61
+  版次 Version : 10.62
   最後更新 Updated: 2026-07-11
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-11  v10.62 圖示右鍵子選單改為加圖示與清除分組,避免清除圖示/待辦混在圖示清單中。
      2026-07-11  v10.61 清單右鍵子選單改用切換語意標籤,讓待辦、有序清單與引用操作更明確。
      2026-07-11  v10.60 整理節點右鍵第一層順序,依使用頻率排列節點操作、文字格式、清單、圖示、分隔線與剪貼簿。
      2026-07-09  v10.59 整理右鍵文字格式子選單,分成基本格式、Markdown 區塊、跳脫符號與連結。
@@ -701,7 +702,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.61';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.62';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-11'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -4383,6 +4384,15 @@ function buildListMenuItems(){
     {label:'❝ 切換引用', fn:toggleQuote},
   ];
 }
+function buildIconMenuItems(){
+  return [
+    {header:'加圖示'},
+    ...ICONS.map(ic=>({label:ic+'　加圖示', fn:()=>setIcon(ic)})),
+    '—',
+    {header:'清除'},
+    {label:'✕ 清除圖示/待辦', fn:clearIconAndTodo},
+  ];
+}
 viewport.addEventListener('contextmenu', e=>{
   e.preventDefault();
   const nodeDom = roots.length ? e.target.closest('.node') : null;
@@ -4396,8 +4406,7 @@ viewport.addEventListener('contextmenu', e=>{
     const multi = selection.size>1;
     const fmtSub = buildTextFormatMenuItems();
     const listSub = buildListMenuItems();
-    const iconSub = ICONS.map(ic=>({label:ic+'　加圖示', fn:()=>setIcon(ic)}));
-    iconSub.push('—', {label:'✕ 清除圖示/待辦', fn:clearIconAndTodo});
+    const iconSub = buildIconMenuItems();
     const structureSub=buildStructureMenuItems(node);
     const dividerSub=[
       {label:'─ 插入分隔線在上方', fn:()=>insertHrNearNode(node,'before')},
@@ -5137,6 +5146,13 @@ function runCommandPaletteSelfTest(options={}){
     add('節點右鍵第一層依使用頻率排序', orderedBefore(nodeGroupLabels, ['節點操作','文字格式','清單','圖示','分隔線','剪貼簿']), nodeGroupLabels.join(','));
     const listLabels=orderedLabels(buildListMenuItems());
     add('清單右鍵標籤使用切換語意', orderedBefore(listLabels, ['切換待辦','切換有序清單','切換引用']), listLabels.join(','));
+    const iconMenu=buildIconMenuItems();
+    const iconMenuParts=iconMenu.map(item=>item&&typeof item!=='string'&&(item.header||item.label)?(item.header||item.label):String(item));
+    const iconHeaderIdx=iconMenuParts.indexOf('加圖示');
+    const iconDividerIdx=iconMenuParts.indexOf('—');
+    const iconClearHeaderIdx=iconMenuParts.indexOf('清除');
+    const iconClearActionIdx=labelIndex(iconMenuParts, '清除圖示/待辦');
+    add('圖示右鍵子選單分開加圖示與清除', iconHeaderIdx===0 && iconDividerIdx>iconHeaderIdx && iconClearHeaderIdx>iconDividerIdx && iconClearActionIdx>iconClearHeaderIdx && iconMenuParts.filter(part=>part.includes('加圖示')).length>=ICONS.length+1, iconMenuParts.join(','));
     const textFormatMenu=buildTextFormatMenuItems();
     const textFormatLabels=menuLabels(textFormatMenu);
     const textFormatTopLabels=textFormatMenu.map(item=>item&&typeof item!=='string'&&(item.header||item.label)?(item.header||item.label):String(item));
