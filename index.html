@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.63
-  最後更新 Updated: 2026-07-11
+  版次 Version : 10.64
+  最後更新 Updated: 2026-07-12
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-12  v10.64 剪貼簿右鍵子選單分成複製貼上與危險操作,讓刪除不再混在貼上同一組。
      2026-07-11  v10.63 分隔線右鍵子選單改用節點上方/下方語意,避免誤解成新增子節點。
      2026-07-11  v10.62 圖示右鍵子選單改為加圖示與清除分組,避免清除圖示/待辦混在圖示清單中。
      2026-07-11  v10.61 清單右鍵子選單改用切換語意標籤,讓待辦、有序清單與引用操作更明確。
@@ -703,9 +704,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.63';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.64';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE    = '2026-07-11'; // 最後更新日期 YYYY-MM-DD
+const APP_DATE    = '2026-07-12'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
 syncAppTitle();
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
@@ -4400,6 +4401,17 @@ function buildDividerMenuItems(node){
     {label:'─ 在這個節點下方加入分隔線', fn:()=>insertHrNearNode(node,'after')}
   ];
 }
+function buildClipboardMenuItems(hasClip){
+  return [
+    {header:'複製貼上'},
+    {label:'📋 複製', key:'⌃C', fn:copySelection},
+    {label:'✂️ 剪下', key:'⌃X', fn:cutSelection},
+    {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
+    '—',
+    {header:'危險操作'},
+    {label:'🗑 刪除', key:'Del', fn:deleteNode}
+  ];
+}
 viewport.addEventListener('contextmenu', e=>{
   e.preventDefault();
   const nodeDom = roots.length ? e.target.closest('.node') : null;
@@ -4416,12 +4428,7 @@ viewport.addEventListener('contextmenu', e=>{
     const iconSub = buildIconMenuItems();
     const structureSub=buildStructureMenuItems(node);
     const dividerSub=buildDividerMenuItems(node);
-    const clipSub=[
-      {label:'📋 複製', key:'⌃C', fn:copySelection},
-      {label:'✂️ 剪下', key:'⌃X', fn:cutSelection},
-      {label:'📥 貼上', key:'⌃V', fn:pasteAny, disabled:!hasClip},
-      {label:'🗑 刪除', key:'Del', fn:deleteNode}
-    ];
+    const clipSub=buildClipboardMenuItems(hasClip);
     items=[
       {header:'編輯'},
       {label:'✏️ 編輯文字', key:'F2', fn:editSelected, disabled:multi},
@@ -5159,6 +5166,14 @@ function runCommandPaletteSelfTest(options={}){
     add('圖示右鍵子選單分開加圖示與清除', iconHeaderIdx===0 && iconDividerIdx>iconHeaderIdx && iconClearHeaderIdx>iconDividerIdx && iconClearActionIdx>iconClearHeaderIdx && iconMenuParts.filter(part=>part.includes('加圖示')).length>=ICONS.length+1, iconMenuParts.join(','));
     const dividerLabels=orderedLabels(buildDividerMenuItems(sampleStructureNode));
     add('分隔線右鍵標籤明確說明節點上下方', orderedBefore(dividerLabels, ['這個節點上方加入分隔線','這個節點下方加入分隔線']), dividerLabels.join(','));
+    const clipboardMenuParts=buildClipboardMenuItems(true).map(item=>item&&typeof item!=='string'&&(item.header||item.label)?(item.header||item.label):String(item));
+    const clipboardHeaderIdx=clipboardMenuParts.indexOf('複製貼上');
+    const copyActionIdx=clipboardMenuParts.indexOf('📋 複製');
+    const cutActionIdx=clipboardMenuParts.indexOf('✂️ 剪下');
+    const pasteActionIdx=clipboardMenuParts.indexOf('📥 貼上');
+    const clipboardDividerIdx=clipboardMenuParts.indexOf('—');
+    const dangerHeaderIdx=clipboardMenuParts.indexOf('危險操作');
+    add('剪貼簿右鍵子選單分開複製貼上與危險操作', clipboardHeaderIdx===0 && copyActionIdx>clipboardHeaderIdx && cutActionIdx>copyActionIdx && pasteActionIdx>cutActionIdx && clipboardDividerIdx>pasteActionIdx && dangerHeaderIdx>clipboardDividerIdx && clipboardMenuParts.indexOf('🗑 刪除')>dangerHeaderIdx, clipboardMenuParts.join(','));
     const textFormatMenu=buildTextFormatMenuItems();
     const textFormatLabels=menuLabels(textFormatMenu);
     const textFormatTopLabels=textFormatMenu.map(item=>item&&typeof item!=='string'&&(item.header||item.label)?(item.header||item.label):String(item));
