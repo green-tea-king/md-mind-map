@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.65
+  版次 Version : 10.66
   最後更新 Updated: 2026-07-13
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-13  v10.66 圖片載入事件改由 JavaScript 統一綁定,移除 inline onload/onerror。
      2026-07-13  v10.65 GitHub Pages 改為只發布 index.html,補強 HTML 寫入安全邊界並整理單檔責任區塊。
      2026-07-12  v10.64 剪貼簿右鍵子選單分成複製貼上與危險操作,讓刪除不再混在貼上同一組。
      2026-07-11  v10.63 分隔線右鍵子選單改用節點上方/下方語意,避免誤解成新增子節點。
@@ -705,7 +706,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.65';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.66';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-13'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -1040,7 +1041,19 @@ function imgHtml(alt, rawSrc, rawTitle){
   if(!src) return '🖼️ '+(alt? escHtml(alt) : '圖片');   // 來源不安全:退回文字標示
   const a=src.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const titleAttr=escHtml(rawTitle!=null?rawTitle:(parsed.title||alt||'')).replace(/"/g,'&quot;');
-  return `<img class="mimg" src="${a}" alt="${altAttr}" title="${titleAttr}" loading="lazy" draggable="false" onload="window._imgRelayout&&window._imgRelayout(this.src)" onerror="this.replaceWith(document.createTextNode('🖼️ '+(this.alt||'圖片')))">`;
+  return `<img class="mimg" src="${a}" alt="${altAttr}" title="${titleAttr}" loading="lazy" draggable="false">`;
+}
+function bindRenderedImages(root){
+  if(!root || !root.querySelectorAll) return;
+  root.querySelectorAll('img.mimg').forEach(img=>{
+    img.addEventListener('load',()=>{
+      try{ window._imgRelayout&&window._imgRelayout(img.currentSrc||img.src); }catch(e){ logCaught(e,'image load relayout'); }
+    },{once:true});
+    img.addEventListener('error',()=>{
+      const label=img.alt||'圖片';
+      img.replaceWith(document.createTextNode('🖼️ '+label));
+    },{once:true});
+  });
 }
 let mdRefDefs = {};
 function normRefId(id){ return String(id||'').trim().replace(/\s+/g,' ').toLowerCase(); }
@@ -2055,6 +2068,7 @@ function render(){
       for(const ql of qlines){ const ln=document.createElement('span'); ln.className='nqline'; setTrustedHTML(ln, ql ? inlineMd(ql) : '&nbsp;', 'node note inline markdown'); nb.appendChild(ln); }
       d.appendChild(nb);
     }
+    bindRenderedImages(d);
     if(n.checked) d.classList.add('done');
     if(n.quote){ /* 引用節點:用 CSS 的黑底白字,不套主題色 */ }
     else {
