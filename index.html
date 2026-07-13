@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.64
-  最後更新 Updated: 2026-07-12
+  版次 Version : 10.65
+  最後更新 Updated: 2026-07-13
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-13  v10.65 GitHub Pages 改為只發布 index.html,補強 HTML 寫入安全邊界並整理單檔責任區塊。
      2026-07-12  v10.64 剪貼簿右鍵子選單分成複製貼上與危險操作,讓刪除不再混在貼上同一組。
      2026-07-11  v10.63 分隔線右鍵子選單改用節點上方/下方語意,避免誤解成新增子節點。
      2026-07-11  v10.62 圖示右鍵子選單改為加圖示與清除分組,避免清除圖示/待辦混在圖示清單中。
@@ -704,9 +705,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.64';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.65';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE    = '2026-07-12'; // 最後更新日期 YYYY-MM-DD
+const APP_DATE    = '2026-07-13'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
 syncAppTitle();
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
@@ -840,8 +841,32 @@ const EMOJI={star:'⭐',fire:'🔥',white_check_mark:'✅',check:'✅',heavy_che
   hammer_and_wrench:'🛠️',construction:'🚧',no_entry:'⛔',recycle:'♻️',hot_pepper:'🌶️',seedling:'🌱'};
 // 行內 Markdown:粗體/斜體(** *、__ _、***)+ Emoji 短碼;先跳脫 HTML 再轉換(顯示用,編輯/匯出仍原始語法)
 function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+//===================== 單檔功能區塊索引 =====================
+// 基礎設定/儲存 -> Markdown parser -> layout/render -> menu/command -> export -> self-test
+// 部署仍維持單一 index.html; 這些區塊標記只用來降低維護時的交叉影響。
+const trustedHtmlPolicy=(()=>{
+  try{
+    return window.trustedTypes ? window.trustedTypes.createPolicy('md-mind-map-renderer', {
+      createHTML(value){ return String(value==null?'':value); }
+    }) : null;
+  }catch(e){
+    try{ console.warn('[MD心智圖] Trusted Types policy unavailable', e); }catch(_){ }
+    return null;
+  }
+})();
 // 唯一允許寫入 HTML 字串的入口。呼叫端必須傳入已 escape 或由白名單產生的內容。
-function setTrustedHTML(el, html, reason){ el.innerHTML=String(html==null?'':html); return el; }
+function setTrustedHTML(el, html, reason){
+  if(!el) return el;
+  if(!reason) throw new Error('setTrustedHTML requires an internal render reason');
+  const value=String(html==null?'':html);
+  el.innerHTML=trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(value) : value;
+  return el;
+}
+function setSafeText(el, value){
+  if(!el) return el;
+  el.textContent=String(value==null?'':value);
+  return el;
+}
 function clearTrustedHTML(el){ el.textContent=''; return el; }
 const mmErrorLog=[];
 function logCaught(err, context){
@@ -5105,6 +5130,11 @@ function runCommandPaletteSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   try{
     const commands=getCommandItems();
+    const textProbe=document.createElement('div');
+    setSafeText(textProbe,'<b>使用者文字</b>');
+    let reasonRequired=false;
+    try{ setTrustedHTML(textProbe,'<b>missing reason</b>'); }catch(_){ reasonRequired=true; }
+    add('使用者文字走安全文字入口且 HTML 入口要求來源說明', textProbe.textContent==='<b>使用者文字</b>' && reasonRequired, textProbe.innerHTML);
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
     add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 單檔' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
