@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.66
+  版次 Version : 10.67
   最後更新 Updated: 2026-07-13
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-13  v10.67 HTML 寫入加入標籤/屬性/網址白名單,保留 Markdown 表格、圖片與 SVG 匯出能力。
      2026-07-13  v10.66 圖片載入事件改由 JavaScript 統一綁定,移除 inline onload/onerror。
      2026-07-13  v10.65 GitHub Pages 改為只發布 index.html,補強 HTML 寫入安全邊界並整理單檔責任區塊。
      2026-07-12  v10.64 剪貼簿右鍵子選單分成複製貼上與危險操作,讓刪除不再混在貼上同一組。
@@ -706,7 +707,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.66';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.67';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-13'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -855,12 +856,65 @@ const trustedHtmlPolicy=(()=>{
     return null;
   }
 })();
+const SAFE_HTML_TAGS=new Set(['a','strong','em','del','sup','code','pre','img','table','thead','tbody','tr','th','td','small','span','svg','line','g','circle','path','rect']);
+const SAFE_SVG_TAGS=new Set(['svg','line','g','circle','path','rect']);
+const SAFE_HTML_ATTRS=new Set(['class','href','title','rel','alt','src','loading','draggable','data-fnid','aria-hidden','preserveaspectratio','style']);
+const SAFE_SVG_ATTRS=new Set(['class','aria-hidden','preserveaspectratio','x','y','x1','y1','x2','y2','cx','cy','r','width','height','d','fill','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','style']);
+function safeSvgAttribute(name,value){
+  const v=String(value||'').trim();
+  if(['x','y','x1','y1','x2','y2','cx','cy','r','width','height','stroke-width','stroke-dashoffset'].includes(name)) return /^-?[0-9.]+$/.test(v);
+  if(name==='d') return /^[0-9A-Za-z .,+()\-]+$/.test(v);
+  if(name==='stroke-dasharray') return /^[0-9. ,]+$/.test(v);
+  if(name==='stroke-linecap') return /^(round|butt|square)$/.test(v);
+  if(name==='stroke-linejoin') return /^(round|miter|bevel)$/.test(v);
+  if(['fill','stroke'].includes(name)) return /^(none|#[0-9a-f]{3,8}|rgba?\([0-9 .,%]+\)|[a-z]+)$/i.test(v);
+  if(name==='preserveaspectratio') return /^(none|x(mid|min|max)Y(mid|min|max)( meet| slice)?)$/i.test(v);
+  if(name==='style') return /^text-align:(left|center|right)$/.test(v);
+  return true;
+}
+function sanitizeTrustedMarkup(html, namespaceURI){
+  const value=String(html==null?'':html);
+  const sanitizeChildren=root=>{
+    [...root.childNodes].forEach(node=>{
+      if(node.nodeType===8){ node.remove(); return; }
+      if(node.nodeType!==1) return;
+      const tag=node.localName.toLowerCase();
+      const isSvg=node.namespaceURI==='http://www.w3.org/2000/svg';
+      const allowed=isSvg ? SAFE_SVG_TAGS.has(tag) : SAFE_HTML_TAGS.has(tag);
+      if(!allowed){ node.remove(); return; }
+      [...node.attributes].forEach(attr=>{
+        const name=attr.name.toLowerCase(), attrValue=attr.value;
+        if(name.startsWith('on')){ node.removeAttribute(attr.name); return; }
+        const attrSet=isSvg ? SAFE_SVG_ATTRS : SAFE_HTML_ATTRS;
+        if(!attrSet.has(name)){ node.removeAttribute(attr.name); return; }
+        if(isSvg && !safeSvgAttribute(name,attrValue)){ node.removeAttribute(attr.name); return; }
+        if(name==='href' && !safeLinkHref(attrValue)){ node.removeAttribute(attr.name); return; }
+        if(name==='src' && !safeImgSrc(attrValue)){ node.removeAttribute(attr.name); return; }
+        if(name==='style' && !/^text-align:(left|center|right)$/.test(attrValue.trim())) node.removeAttribute(attr.name);
+        if(name==='loading' && attrValue!=='lazy') node.removeAttribute(attr.name);
+        if(name==='draggable' && attrValue!=='false') node.removeAttribute(attr.name);
+        if(name==='rel' && attrValue!=='noopener noreferrer') node.removeAttribute(attr.name);
+      });
+      sanitizeChildren(node);
+    });
+  };
+  if(namespaceURI==='http://www.w3.org/2000/svg'){
+    const doc=new DOMParser().parseFromString('<svg xmlns="http://www.w3.org/2000/svg">'+value+'</svg>','image/svg+xml');
+    if(doc.querySelector('parsererror')) return '';
+    sanitizeChildren(doc.documentElement);
+    return [...doc.documentElement.childNodes].map(node=>node.outerHTML||'').join('');
+  }
+  const template=document.createElement('template');
+  template.innerHTML=trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(value) : value;
+  sanitizeChildren(template.content);
+  return template.innerHTML;
+}
 // 唯一允許寫入 HTML 字串的入口。呼叫端必須傳入已 escape 或由白名單產生的內容。
 function setTrustedHTML(el, html, reason){
   if(!el) return el;
   if(!reason) throw new Error('setTrustedHTML requires an internal render reason');
-  const value=String(html==null?'':html);
-  el.innerHTML=trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(value) : value;
+  const safeValue=sanitizeTrustedMarkup(html,el.namespaceURI);
+  el.innerHTML=trustedHtmlPolicy ? trustedHtmlPolicy.createHTML(safeValue) : safeValue;
   return el;
 }
 function setSafeText(el, value){
@@ -5149,6 +5203,9 @@ function runCommandPaletteSelfTest(options={}){
     let reasonRequired=false;
     try{ setTrustedHTML(textProbe,'<b>missing reason</b>'); }catch(_){ reasonRequired=true; }
     add('使用者文字走安全文字入口且 HTML 入口要求來源說明', textProbe.textContent==='<b>使用者文字</b>' && reasonRequired, textProbe.innerHTML);
+    const markupProbe=document.createElement('div');
+    setTrustedHTML(markupProbe,'<strong>保留</strong><scr'+'ipt>window.__bad=1</scr'+'ipt><img src="javascript:alert(1)" onerror="window.__bad=2">','sanitizer self test');
+    add('HTML 白名單會移除危險標籤、事件與 URL', !!markupProbe.querySelector('strong') && !markupProbe.querySelector('script') && !markupProbe.querySelector('[onerror]') && !markupProbe.querySelector('img[src^="javascript:"]'), markupProbe.innerHTML);
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
     add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
     add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 單檔' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
