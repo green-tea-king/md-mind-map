@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.70
+  版次 Version : 10.71
   最後更新 Updated: 2026-07-14
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-14  v10.71 搜尋工具改為按需顯示:平常完全隱藏,僅由 Ctrl+F、右鍵選單或命令面板開啟,Esc 與關閉按鈕會再次隱藏整個搜尋窗。
      2026-07-14  v10.70 JPG/PDF 完整支援 HTML 區塊:純文字保留灰底等寬框,安全顯示保留 summary、段落、清單與行內格式;匯出稽核與自檢同步補強。
      2026-07-14  v10.69 內建範本新增 HTML details 區塊,直接示範純文字與白名單安全顯示差異。
      2026-07-14  v10.68 HTML 區塊新增純文字/白名單安全顯示切換,預設純文字並保留原始 Markdown。
@@ -394,7 +395,8 @@
     border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;box-shadow:0 5px 16px rgba(0,0,0,.24);
     transform:translate(-50%,-130%);white-space:nowrap;}
   #fwSearch .fwbody{position:relative;gap:8px;padding:8px 10px;}
-  #fwSearch{overflow:visible;}
+  #fwSearch{display:none;overflow:visible;}
+  #fwSearch.search-open{display:flex;}
   #searchInput{border:none;outline:none;font-size:14px;width:260px;padding:4px 5px;font-family:inherit;background:transparent;color:var(--txt);}
   #searchCount{font-size:12px;color:#7b8794;min-width:40px;text-align:center;}
   #searchBar button{width:26px;height:26px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:13px;color:var(--txt);}
@@ -680,7 +682,7 @@
 <!-- 浮動工具視窗(可拖曳標題列移動,點 — 收合) -->
 <div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span><span id="saveInfo" class="save-info"></span></div></div>
 
-<div class="floatwin" id="fwSearch">
+<div class="floatwin" id="fwSearch" aria-hidden="true">
   <div class="fwhead">搜尋<button class="fwcollapse" title="收合">–</button></div>
   <div class="fwbody">
     <div id="searchBar">
@@ -721,7 +723,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.70';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.71';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-14'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -4271,8 +4273,22 @@ const searchCount=document.getElementById('searchCount');
 const searchWrap=document.getElementById('searchWrap');
 const searchHint=document.getElementById('searchHint');
 const searchList=document.getElementById('searchList');
+const searchWindowEl=document.getElementById('fwSearch');
 let searchOpenedIds=new Set();
-function openSearch(){ searchBar.classList.add('show'); searchWrap.classList.add('show'); searchInput.focus(); searchInput.select(); if(searchInput.value) runSearch(searchInput.value, false); else updateSearchUI(); }
+function setSearchWindowOpen(open){
+  searchWindowEl.classList.toggle('search-open', !!open);
+  searchWindowEl.setAttribute('aria-hidden', open?'false':'true');
+}
+function openSearch(){
+  setSearchWindowOpen(true);
+  searchWindowEl.classList.remove('collapsed');
+  const collapse=searchWindowEl.querySelector('.fwcollapse');
+  if(collapse){ collapse.textContent='–'; collapse.title='收合'; }
+  searchBar.classList.add('show'); searchWrap.classList.add('show');
+  sanitizeFloatWinPositions();
+  searchInput.focus(); searchInput.select();
+  if(searchInput.value) runSearch(searchInput.value, false); else updateSearchUI();
+}
 function refreshSearchDom(){ canvas.querySelectorAll('.node').forEach(d=>{
   d.classList.toggle('match', searchMatchIds.has(d.dataset.id));
   d.classList.toggle('match-current', d.dataset.id===currentMatchId);
@@ -4281,7 +4297,7 @@ function restoreSearchOpened(){ let changed=false;
   for(const id of searchOpenedIds){ const n=findByIdAll(id); if(n && !n.collapsed){ n.collapsed=true; changed=true; } }
   searchOpenedIds.clear(); return changed;
 }
-function closeSearch(){ searchBar.classList.remove('show'); searchWrap.classList.remove('show'); searchInput.value=''; const changed=restoreSearchOpened(); clearSearch(); if(changed) scheduleRender(); else refreshSearchDom(); }
+function closeSearch(){ searchBar.classList.remove('show'); searchWrap.classList.remove('show'); searchInput.value=''; setSearchWindowOpen(false); const changed=restoreSearchOpened(); clearSearch(); if(changed) scheduleRender(); else refreshSearchDom(); }
 function clearSearch(){ searchMatches=[]; searchMatchIds=new Set(); searchIdx=-1; currentMatchId=null; updateSearchUI(); }
 function searchNodePath(n){ const parts=[]; let p=n; while(p){ if(p.title) parts.push(String(p.title).split('\n')[0]); p=p.parent; } return parts.reverse().join(' / '); }
 function updateSearchUI(){
@@ -5432,13 +5448,13 @@ function runCommandPaletteSelfTest(options={}){
     add('桌面版不包含小螢幕入口', !document.getElementById('mobile'+'MenuBtn') && !commands.some(c=>retiredCompactUiPattern.test(c.label+' '+(c.aliases||''))) && typeof window['runMindMap'+'MobileEntrySelfTest']==='undefined', commands.map(c=>c.label).join(','));
     const floatWins=[...document.querySelectorAll('.floatwin')];
     const hiddenFloatWins=floatWins.filter(w=>getComputedStyle(w).display==='none').map(w=>w.id);
-    add('浮動工具窗沒有被 CSS 強制隱藏', hiddenFloatWins.length===0, hiddenFloatWins.join(','));
+    add('搜尋工具預設隱藏且品牌資訊維持顯示', hiddenFloatWins.join(',')==='fwSearch' && getComputedStyle(document.getElementById('fwBrand')).display!=='none', hiddenFloatWins.join(','));
     const floatWinIds=floatWins.map(w=>w.id).sort();
     add('浮動工具窗只保留全域高頻入口', floatWinIds.join('|')==='fwBrand|fwSearch', floatWinIds.join(','));
     const savedFwPos=fwPos;
     fwPos={};
     placeFloatWins();
-    const rowWins=FLOAT_ORDER.map(id=>document.getElementById(id)).filter(Boolean).map(w=>({id:w.id, left:parseFloat(w.style.left)||0, top:parseFloat(w.style.top)||0, width:w.offsetWidth||0}));
+    const rowWins=FLOAT_ORDER.map(id=>document.getElementById(id)).filter(w=>w && getComputedStyle(w).display!=='none').map(w=>({id:w.id, left:parseFloat(w.style.left)||0, top:parseFloat(w.style.top)||0, width:w.offsetWidth||0}));
     const rows=[];
     for(const w of rowWins){
       let row=rows.find(r=>Math.abs(r.top-w.top)<=1);
@@ -5454,8 +5470,8 @@ function runCommandPaletteSelfTest(options={}){
       && rows.every(r=>r.wins[0] && Math.abs(r.wins[0].left-FLOAT_LEFT)<1)
       && rowGaps.every(g=>Math.abs(g-FLOAT_GAP)<=1);
     const searchWin=document.getElementById('fwSearch');
-    add('搜尋輸入列整合在搜尋工具窗且檔案編輯檢視改走右鍵', !!(searchWin && searchWin.querySelector('#searchBar') && searchWin.querySelector('#searchWrap') && !document.getElementById('btnSearch') && !document.getElementById('fwFile') && !document.getElementById('fwEdit') && !document.getElementById('fwView')), '');
-    add('浮動工具窗預設在上方緊密等距排列', rowWins.length===2 && rowLayoutOk, rows.map(r=>r.wins.map(w=>`${w.id}:${w.left},${w.top},w${w.width}`).join(' | ')).join(' / ')+' gaps='+rowGaps.join(','));
+    add('搜尋輸入列整合在按需顯示工具窗且檔案編輯檢視改走右鍵', !!(searchWin && searchWin.querySelector('#searchBar') && searchWin.querySelector('#searchWrap') && !searchWin.classList.contains('search-open') && !document.getElementById('btnSearch') && !document.getElementById('fwFile') && !document.getElementById('fwEdit') && !document.getElementById('fwView')), '');
+    add('常駐工具窗只保留上方品牌資訊', rowWins.length===1 && rowWins[0].id==='fwBrand' && rowLayoutOk, rows.map(r=>r.wins.map(w=>`${w.id}:${w.left},${w.top},w${w.width}`).join(' | ')).join(' / ')+' gaps='+rowGaps.join(','));
     fwPos=savedFwPos;
     placeFloatWins();
     const sampleFloatWin=document.getElementById('fwSearch')||floatWins[0];
@@ -5544,8 +5560,11 @@ function runSearchExperienceSelfTest(options={}){
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
   const savedScale=scale, savedPanX=panX, savedPanY=panY;
   const oldSearchValue=searchInput.value;
-  const searchWasOpen=searchBar.classList.contains('show') || searchWrap.classList.contains('show');
+  const searchWin=document.getElementById('fwSearch');
+  const searchWasOpen=searchWin.classList.contains('search-open');
   try{
+    setSearchWindowOpen(false);
+    add('搜尋工具平常完全隱藏', getComputedStyle(searchWin).display==='none', getComputedStyle(searchWin).display);
     roots=parseMarkdown('# 搜尋自檢中心\n- Alpha 主要節點\n  - Alpha 子節點\n- Beta 節點\n');
     roots.forEach(r=>setParents(r,null));
     selected=roots[0]; selection=new Set([selected]);
@@ -5553,7 +5572,7 @@ function runSearchExperienceSelfTest(options={}){
     searchInput.value='Alpha';
     openSearch();
     runSearch('Alpha', false);
-    add('搜尋列整合在搜尋工具窗並會開啟結果清單', document.getElementById('fwSearch').contains(searchBar) && searchBar.classList.contains('show') && searchWrap.classList.contains('show'), `${searchBar.className}/${searchWrap.className}`);
+    add('搜尋列整合在搜尋工具窗並會開啟結果清單', searchWin.contains(searchBar) && searchWin.classList.contains('search-open') && getComputedStyle(searchWin).display!=='none' && searchBar.classList.contains('show') && searchWrap.classList.contains('show'), `${getComputedStyle(searchWin).display}/${searchWin.className}/${searchBar.className}/${searchWrap.className}`);
     add('搜尋可找到多個節點', searchMatches.length===2 && searchCount.textContent==='1/2', `${searchMatches.length}/${searchCount.textContent}`);
     add('搜尋結果清單列出命中節點', searchList.querySelectorAll('.searchItem').length===2 && /找到 2 個結果/.test(searchHint.textContent||''), searchHint.textContent);
     const second=searchList.querySelector('.searchItem[data-index="1"]');
@@ -5563,7 +5582,7 @@ function runSearchExperienceSelfTest(options={}){
     runSearch(searchInput.value, false);
     add('無結果時有清楚提示', searchMatches.length===0 && /找不到/.test(searchHint.textContent||'') && !!searchList.querySelector('.searchEmpty'), searchHint.textContent);
     closeSearch();
-    add('關閉搜尋會保留輸入列並收起結果清單', document.getElementById('fwSearch').contains(searchBar) && !searchBar.classList.contains('show') && !searchWrap.classList.contains('show') && searchInput.value==='', `${searchBar.className}/${searchWrap.className}/${searchInput.value}`);
+    add('關閉搜尋會清除狀態並隱藏整個工具窗', !searchWin.classList.contains('search-open') && getComputedStyle(searchWin).display==='none' && !searchBar.classList.contains('show') && !searchWrap.classList.contains('show') && searchInput.value==='', `${getComputedStyle(searchWin).display}/${searchWin.className}/${searchBar.className}/${searchWrap.className}/${searchInput.value}`);
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -5577,8 +5596,9 @@ function runSearchExperienceSelfTest(options={}){
   }finally{
     closeSearch();
     searchInput.value=oldSearchValue;
-    if(searchWasOpen) searchBar.classList.add('show'); else searchBar.classList.remove('show');
-    if(searchWasOpen) searchWrap.classList.add('show'); else searchWrap.classList.remove('show');
+    setSearchWindowOpen(searchWasOpen);
+    if(searchWasOpen){ searchBar.classList.add('show'); searchWrap.classList.add('show'); }
+    else { searchBar.classList.remove('show'); searchWrap.classList.remove('show'); }
     roots=savedRoots;
     scale=savedScale; panX=savedPanX; panY=savedPanY;
     roots.forEach(r=>setParents(r,null));
@@ -5820,7 +5840,7 @@ Setext H2 寫法
 - 版面:固定 Markdown 順序瀏覽,父節點在左、同層由上往下排列,更接近原始 Markdown 的閱讀順序
 - 置中:右鍵 → 檢視 → 置中,或右下角 ＋／－ 縮放、⤢ 重置
 - 深色介面:右鍵 → 檢視 → 深色或淺色(會記住選擇)
-- 搜尋:Ctrl+F,Enter 跳下一個、Shift+Enter 跳上一個
+- 搜尋:平常隱藏;按 Ctrl+F 或右鍵 → 檢視 → 搜尋開啟,Enter 跳下一個、Shift+Enter 跳上一個,Esc 關閉
 - 命令面板:Ctrl+K,或右鍵 → 檢視 → 命令面板,可搜尋檔案、檢視、版面與自檢命令
 - 每個節點右側的圓圈 ＋／－ 可展開或收合該分支
 - 診斷/自檢:Ctrl+K 開啟命令面板後搜尋「自檢」,可檢查範本、Markdown 規則、大型 Markdown、匯出、HTML 單檔、分隔線位置、命令面板、右鍵選單、搜尋體驗、鍵盤操作與完整流程
