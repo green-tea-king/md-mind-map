@@ -27,6 +27,52 @@ jobs:
           cp index.html site/index.html
           touch site/.nojekyll
 
+      - name: Run browser self-test gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory site > /tmp/md-mind-map-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173/index.html > /dev/null; then
+              break
+            fi
+            if [[ "$attempt" == "20" ]]; then
+              cat /tmp/md-mind-map-http.log
+              exit 1
+            fi
+            sleep 0.25
+          done
+
+          chrome_bin="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [[ -z "$chrome_bin" ]]; then
+            echo "Headless Chrome is not available on this runner."
+            exit 1
+          fi
+
+          timeout 90 "$chrome_bin" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --disable-background-timer-throttling \
+            --virtual-time-budget=30000 \
+            --dump-dom \
+            'http://127.0.0.1:4173/index.html?ci-selftest=1' \
+            > /tmp/md-mind-map-selftest.html
+
+          if ! grep -q 'data-ci-self-test="pass"' /tmp/md-mind-map-selftest.html \
+            || ! grep -q 'data-ci-self-test-passed="11"' /tmp/md-mind-map-selftest.html \
+            || ! grep -q 'data-ci-self-test-failed="0"' /tmp/md-mind-map-selftest.html; then
+            echo "Browser self-test gate failed."
+            grep -o 'data-ci-self-test[^ >]*="[^"]*"' /tmp/md-mind-map-selftest.html || true
+            exit 1
+          fi
+
+          echo "Browser self-test gate passed: 11/11 groups."
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

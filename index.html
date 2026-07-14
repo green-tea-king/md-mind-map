@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.71
+  版次 Version : 10.72
   最後更新 Updated: 2026-07-14
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-14  v10.72 GitHub Pages 新增瀏覽器自檢部署閘門:發布前以無頭 Chrome 執行完整 11 組自檢,失敗時停止部署。
      2026-07-14  v10.71 搜尋工具改為按需顯示:平常完全隱藏,僅由 Ctrl+F、右鍵選單或命令面板開啟,Esc 與關閉按鈕會再次隱藏整個搜尋窗。
      2026-07-14  v10.70 JPG/PDF 完整支援 HTML 區塊:純文字保留灰底等寬框,安全顯示保留 summary、段落、清單與行內格式;匯出稽核與自檢同步補強。
      2026-07-14  v10.69 內建範本新增 HTML details 區塊,直接示範純文字與白名單安全顯示差異。
@@ -723,7 +724,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.71';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.72';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-14'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -5922,6 +5923,27 @@ document.documentElement.dataset.interactionSelfTestDetail=interactionSelfTestRe
 selectOnly(roots[0]);
 markSaved();
 render(); fit();   // 顏色由 render() 依目前主題即時套用(預設 Vivid)
+function runCiSelfTestIfRequested(){
+  if(new URLSearchParams(location.search).get('ci-selftest')!=='1') return;
+  const root=document.documentElement;
+  root.dataset.ciSelfTest='running';
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    try{
+      const result=runMindMapFullSelfTest({toast:false, log:false, report:false});
+      root.dataset.ciSelfTest=result.ok?'pass':'fail';
+      root.dataset.ciSelfTestPassed=String(result.passed);
+      root.dataset.ciSelfTestFailed=String(result.failed);
+      root.dataset.ciSelfTestDetail=result.checks.filter(c=>!c.ok).map(c=>c.name+': '+c.detail).join(' | ');
+    }catch(e){
+      logCaught(e,'CI full self test');
+      root.dataset.ciSelfTest='fail';
+      root.dataset.ciSelfTestPassed='0';
+      root.dataset.ciSelfTestFailed='1';
+      root.dataset.ciSelfTestDetail=String(e&&e.message||e);
+    }
+  }));
+}
+runCiSelfTestIfRequested();
 // 字體載入完成後,節點寬度會變化;重算一次版面,避免連接線與節點邊緣對不齊(出現空隙)
 if(document.fonts && document.fonts.ready){ document.fonts.ready.then(()=>{ try{ const a=selected; renderKeepingAnchor(a); }catch(e){ logCaught(e,'font-ready anchor render'); try{ render(); }catch(_){ logCaught(_,'font-ready fallback render'); } } }); }
 (function(){ const op=storageGet(STORAGE_KEYS.markdownPanelOpen, null, 'read markdown panel open state'); if(op==='1') toggleMdPanel(true); })();

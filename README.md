@@ -35,12 +35,12 @@ https://green-tea-king.github.io/md-mind-map/
 
 ## Deployment
 
-GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會把維護用的 README、PROJECT_RULES 或備份檔放進網站。
+GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會把維護用的 README、PROJECT_RULES 或備份檔放進網站。發布前會用無頭 Chrome 執行完整 11 組自檢；任一組失敗就停止部署。
 
 本機部署工具：
 
 ```powershell
-& "W:\4. TODO (這裡是公用區 特定電腦勿放)\MD心智圖\deploy.ps1" -Message "Deploy v10.70"
+& "W:\4. TODO (這裡是公用區 特定電腦勿放)\MD心智圖\deploy.ps1" -Message "Deploy current version"
 ```
 
 `deploy.ps1` 是本機工具，目前不納入 repo；它會在部署前檢查 GitHub CLI 認證、push 權限與 Git credential 狀態。
