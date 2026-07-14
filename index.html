@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.69
+  版次 Version : 10.70
   最後更新 Updated: 2026-07-14
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-14  v10.70 JPG/PDF 完整支援 HTML 區塊:純文字保留灰底等寬框,安全顯示保留 summary、段落、清單與行內格式;匯出稽核與自檢同步補強。
      2026-07-14  v10.69 內建範本新增 HTML details 區塊,直接示範純文字與白名單安全顯示差異。
      2026-07-14  v10.68 HTML 區塊新增純文字/白名單安全顯示切換,預設純文字並保留原始 Markdown。
      2026-07-13  v10.67 HTML 寫入加入標籤/屬性/網址白名單,保留 Markdown 表格、圖片與 SVG 匯出能力。
@@ -720,7 +721,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.69';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.70';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE    = '2026-07-14'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
@@ -2711,7 +2712,7 @@ const EXPORT_SUPPORT={
   nodes:[
     '一般節點','中心節點','序言節點','待辦/完成狀態','有序清單序號','圖示徽章',
     'Markdown 水平分隔線','Markdown 表格','圍籬/縮排程式碼','引用節點','標題引言註解',
-    'GFM 警示框','腳註定義','參考式連結/圖片定義'
+    'GFM 警示框','腳註定義','參考式連結/圖片定義','Markdown HTML 區塊'
   ],
   inline:['粗體','斜體','刪除線','連結底線','行內程式碼底色','腳註引用','Emoji/短碼','圖片替代文字'],
   edges:['節點虛線連線','收合 stub','水平分隔線虛線'],
@@ -2732,6 +2733,7 @@ function detectExportFeatures(){
     if(el.classList.contains('hrnode')) features.add('Markdown 水平分隔線');
     if(el.querySelector('table.mdtable')) features.add('Markdown 表格');
     if(el.querySelector('pre.mdpre')) features.add('圍籬/縮排程式碼');
+    if(el.classList.contains('htmlnode')) features.add('Markdown HTML 區塊');
     if(el.classList.contains('quote')) features.add('引用節點');
     if(el.querySelector('.nnote')) features.add('標題引言註解');
     if(el.classList.contains('alert')) features.add('GFM 警示框');
@@ -2881,6 +2883,48 @@ function _drawRichLines(ctx, lines, x, yMid, lh, fs, family, weight, style){
     y+=lh;
   }
 }
+function _canvasHtmlBlocks(root){
+  const blocks=[];
+  const directKinds={SUMMARY:'summary',P:'paragraph',LI:'list-item',PRE:'pre',TABLE:'table',BLOCKQUOTE:'blockquote',
+    H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',H6:'heading'};
+  const containers=new Set(['DETAILS','UL','OL','DIV']);
+  function walk(parent){
+    for(const el of parent.children){
+      const kind=directKinds[el.tagName];
+      if(kind){ blocks.push({kind,el}); continue; }
+      if(containers.has(el.tagName)){
+        const before=blocks.length; walk(el);
+        if(blocks.length===before && (el.textContent||'').trim()) blocks.push({kind:'generic',el});
+        continue;
+      }
+      if((el.textContent||'').trim() || el.querySelector('img')) blocks.push({kind:'generic',el});
+    }
+  }
+  walk(root);
+  if(!blocks.length && (root.textContent||'').trim()) blocks.push({kind:'generic',el:root});
+  return blocks;
+}
+function _drawCanvasHtmlSafe(ctx, nodeEl, htmlEl, nx, ny){
+  const nodeRect=nodeEl.getBoundingClientRect(), sc=scale||1;
+  const blocks=_canvasHtmlBlocks(htmlEl);
+  for(const block of blocks){
+    if(block.kind==='pre'){ _drawCanvasPre(ctx,nodeEl,block.el,nx,ny); continue; }
+    if(block.kind==='table'){ _drawCanvasTable(ctx,nodeEl,block.el,nx,ny); continue; }
+    const el=block.el, r=el.getBoundingClientRect(), cs=getComputedStyle(el);
+    const x=nx+(r.left-nodeRect.left)/sc, y=ny+(r.top-nodeRect.top)/sc;
+    const w=Math.max(10,r.width/sc), fs=parseFloat(cs.fontSize)||13, lh=parseFloat(cs.lineHeight)||fs*1.45;
+    const family=cs.fontFamily||'sans-serif', weight=block.kind==='summary'?'700':(cs.fontWeight||'400'), style=cs.fontStyle||'normal';
+    const base={color:cs.color||'#1f2933',weight,style,family,size:fs,decoration:cs.textDecorationLine||'none'};
+    const segs=[];
+    if(block.kind==='summary') segs.push({...base,text:'▼ '});
+    else if(block.kind==='list-item') segs.push({...base,text:'• '});
+    segs.push(..._richSegments(el,base));
+    const padL=parseFloat(cs.paddingLeft)||0, padR=parseFloat(cs.paddingRight)||0;
+    const lines=_layoutRich(ctx,segs,Math.max(8,w-padL-padR),fs,family,weight,style);
+    _drawRichLines(ctx,lines,x+padL,y+lh/2,lh,fs,family,weight,style);
+  }
+  return blocks;
+}
 function renderMapToCanvas(options={}){
   if(!roots.length) return null;
   if(!options.skipRender) render();
@@ -2889,6 +2933,7 @@ function renderMapToCanvas(options={}){
   let sf=2; const MAX=12000; sf=Math.min(sf, MAX/w, MAX/h); if(!(sf>0)) sf=1; if(sf<0.4) sf=0.4;
   const cv=document.createElement('canvas'); cv.width=Math.round(w*sf); cv.height=Math.round(h*sf);
   const ctx=cv.getContext('2d'); if(!ctx) return null; ctx.scale(sf,sf);
+  const exportStats={htmlRaw:0,htmlSafe:0};
   const bg=((getComputedStyle(document.documentElement).getPropertyValue('--bg')||'').trim())||'#ffffff';
   ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
   ctx.lineCap='round'; ctx.lineJoin='round';
@@ -2918,6 +2963,12 @@ function renderMapToCanvas(options={}){
     if(_tblEl){ _drawCanvasTable(ctx, el, _tblEl, x, y); ctx.restore(); return; }
     const _preEl=el.querySelector('pre.mdpre');
     if(_preEl){ _drawCanvasPre(ctx, el, _preEl, x, y); ctx.restore(); return; }
+    if(el.classList.contains('htmlnode')){
+      const rawEl=el.querySelector('pre.mdhtmlraw'), safeEl=el.querySelector('.htmlsafe');
+      if(rawEl){ _drawCanvasPre(ctx,el,rawEl,x,y); exportStats.htmlRaw++; }
+      else if(safeEl){ _drawCanvasHtmlSafe(ctx,el,safeEl,x,y); exportStats.htmlSafe++; }
+      ctx.restore(); return;
+    }
     const fs=parseFloat(cs.fontSize)||14, lh=fs*1.4, baseColor=cs.color||'#1f2933';
     const baseSeg={color:baseColor,weight:cs.fontWeight||'400',style:cs.fontStyle||'normal',family:cs.fontFamily||'sans-serif',size:fs,decoration:'none'};
     const segs=[]; const ord=el.querySelector('.norder'); if(ord) segs.push({...baseSeg,text:ord.textContent+' '});
@@ -2967,7 +3018,7 @@ function renderMapToCanvas(options={}){
     }
     ctx.restore();
   });
-  cv._mmScaleFactor=sf; cv._mmMapWidth=w; cv._mmMapHeight=h;
+  cv._mmScaleFactor=sf; cv._mmMapWidth=w; cv._mmMapHeight=h; cv._mmExportStats=exportStats;
   return cv;
 }
 window.auditMindMapExportSupport=auditExportSupport;
@@ -3043,6 +3094,7 @@ function runExportSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail)=>checks.push({name, ok:!!ok, detail:detail||''});
   const savedRoots=roots, savedSelectedId=selected&&selected.id, savedSelectionIds=[...selection].map(n=>n.id);
   const savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
+  const savedHtmlDisplayMode=htmlDisplayMode;
   try{
     roots=parseMarkdown(`# 匯出自檢
 - **粗體**、*斜體*、~~刪除~~、[連結](https://example.com)
@@ -3056,12 +3108,22 @@ code block
 \`\`\`
 > [!WARNING]
 > 匯出警示框測試
+
+<details open>
+<summary><strong>HTML 摘要</strong></summary>
+<p>獨立段落含 <code>inline code</code></p>
+<ul>
+<li>第一個項目</li>
+<li><em>第二個項目</em></li>
+</ul>
+</details>
 `);
     roots.forEach(r=>setParents(r,null));
     selected=roots[0]; selection=new Set([selected]);
     render();
     const audit=auditExportSupport();
     add('匯出支援清單沒有遺漏目前節點類型', audit.unsupported.length===0, audit.unsupported.join(',')||'ok');
+    add('匯出能力稽核會辨識 Markdown HTML 區塊', audit.used.includes('Markdown HTML 區塊'), audit.used.join(','));
     add('測試圖含分隔線與表格 DOM', !!canvas.querySelector('.node.hrnode') && !!canvas.querySelector('table.mdtable'), 'hr/table');
     const cv=renderMapToCanvas({skipRender:true});
     add('Canvas 匯出尺寸合理', !!(cv && cv.width>80 && cv.height>80 && cv._mmScaleFactor>0), cv?`${cv.width}x${cv.height}@${cv._mmScaleFactor}`:'no canvas');
@@ -3079,6 +3141,23 @@ code block
     }
     const tblPix=_canvasPixelActivity(cv, tblRect, bg);
     add('Canvas 內有畫出表格格線與文字', tblPix.active>=30 && tblPix.ratio>0.02, `${tblPix.active}/${tblPix.total}`);
+    setHtmlDisplayMode(HTML_DISPLAY_MODES.text, false);
+    const rawHtmlNode=canvas.querySelector('.node.htmlnode'), rawPre=rawHtmlNode&&rawHtmlNode.querySelector('pre.mdhtmlraw');
+    const rawCv=renderMapToCanvas({skipRender:true}), rawBg=_canvasBackgroundRgb(rawCv);
+    const rawRect=rawHtmlNode ? {x:rawHtmlNode.offsetLeft,y:rawHtmlNode.offsetTop,w:rawHtmlNode.offsetWidth,h:rawHtmlNode.offsetHeight} : null;
+    const rawPix=_canvasPixelActivity(rawCv,rawRect,rawBg);
+    add('HTML 純文字模式使用 pre 專用 Canvas 路徑', !!rawPre && !!(rawCv&&rawCv._mmExportStats&&rawCv._mmExportStats.htmlRaw===1), rawCv&&JSON.stringify(rawCv._mmExportStats));
+    add('HTML 純文字模式在 Canvas 有可見內容', rawPix.active>=20 && rawPix.ratio>0.01, `${rawPix.active}/${rawPix.total}`);
+    setHtmlDisplayMode(HTML_DISPLAY_MODES.safe, false);
+    const safeHtmlNode=canvas.querySelector('.node.htmlnode'), safeHtml=safeHtmlNode&&safeHtmlNode.querySelector('.htmlsafe');
+    const blocks=typeof _canvasHtmlBlocks==='function' && safeHtml ? _canvasHtmlBlocks(safeHtml) : [];
+    const kinds=blocks.map(b=>b.kind);
+    add('HTML 安全模式保留 summary、段落與兩個清單項目', kinds.filter(k=>k==='summary').length===1 && kinds.filter(k=>k==='paragraph').length===1 && kinds.filter(k=>k==='list-item').length===2, kinds.join(','));
+    const safeCv=renderMapToCanvas({skipRender:true}), safeBg=_canvasBackgroundRgb(safeCv);
+    const safeRect=safeHtmlNode ? {x:safeHtmlNode.offsetLeft,y:safeHtmlNode.offsetTop,w:safeHtmlNode.offsetWidth,h:safeHtmlNode.offsetHeight} : null;
+    const safePix=_canvasPixelActivity(safeCv,safeRect,safeBg);
+    add('HTML 安全模式使用專用 Canvas 路徑', !!(safeCv&&safeCv._mmExportStats&&safeCv._mmExportStats.htmlSafe===1), safeCv&&JSON.stringify(safeCv._mmExportStats));
+    add('HTML 安全模式在 Canvas 有可見內容', safePix.active>=20 && safePix.ratio>0.01, `${safePix.active}/${safePix.total}`);
     const jpg=cv.toDataURL('image/jpeg',0.6);
     add('JPG data URL 可產生', /^data:image\/jpeg;base64,/.test(jpg) && jpg.length>200, String(jpg.length));
     const bytes=new Uint8Array([255,216,255,217]);
@@ -3101,6 +3180,7 @@ code block
     return result;
   }finally{
     roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
+    htmlDisplayMode=savedHtmlDisplayMode;
     roots.forEach(r=>setParents(r,null));
     selection=new Set();
     savedSelectionIds.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
