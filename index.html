@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+     2026-07-14  v10.68 HTML 區塊新增純文字/白名單安全顯示切換,預設純文字並保留原始 Markdown。
      2026-07-13  v10.67 HTML 寫入加入標籤/屬性/網址白名單,保留 Markdown 表格、圖片與 SVG 匯出能力。
      2026-07-13  v10.66 圖片載入事件改由 JavaScript 統一綁定,移除 inline onload/onerror。
      2026-07-13  v10.65 GitHub Pages 改為只發布 index.html,補強 HTML 寫入安全邊界並整理單檔責任區塊。
@@ -626,6 +627,17 @@
     line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; max-width:880px; }
   .node pre.mdpre code{ font-family:inherit; background:none; padding:0; white-space:inherit; }
   html.dark .node pre.mdpre{ background:rgba(150,162,178,.16); }
+  /* ===== Markdown HTML 區塊(預設純文字,可切換白名單安全顯示) ===== */
+  .node.htmlnode{ max-width:920px; }
+  .node .ntext.hashtml{ display:block; white-space:normal; }
+  .node pre.mdhtmlraw{ margin:2px 0; padding:8px 11px; border-radius:7px; background:rgba(120,132,148,.16);
+    font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace; font-size:.86em;
+    line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; max-width:880px; }
+  .node .ntext.htmlsafe > *{ max-width:100%; }
+  .node .ntext.htmlsafe p,.node .ntext.htmlsafe blockquote{ margin:4px 0; }
+  .node .ntext.htmlsafe pre{ white-space:pre-wrap; overflow-wrap:anywhere; }
+  .node .ntext.htmlsafe img{ max-width:100%; height:auto; }
+  html.dark .node pre.mdhtmlraw{ background:rgba(150,162,178,.16); }
 </style>
 </head>
 <body>
@@ -707,9 +719,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.67';        // 版次:小改 +0.1,大改 +1.0
+const APP_VERSION = '10.68';        // 版次:小改 +0.1,大改 +1.0
 const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE    = '2026-07-13'; // 最後更新日期 YYYY-MM-DD
+const APP_DATE    = '2026-07-14'; // 最後更新日期 YYYY-MM-DD
 function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
 syncAppTitle();
 { const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
@@ -723,6 +735,7 @@ const STORAGE_KEYS=Object.freeze({
   floatingWindows:'mm-fwpos10',
   darkMode:'mm-dark',
   nodeWrap:'mm-node-wrap',
+  htmlDisplayMode:'mm-html-display-mode',
   lastExportAt:'mm-last-export-at',
   preExportChecks:'mm-pre-export-checks'
 });
@@ -732,6 +745,7 @@ const PREF_KEYS=[
   STORAGE_KEYS.floatingWindows,
   STORAGE_KEYS.darkMode,
   STORAGE_KEYS.nodeWrap,
+  STORAGE_KEYS.htmlDisplayMode,
   STORAGE_KEYS.preExportChecks
 ];
 function storageReport(err, context){
@@ -766,6 +780,16 @@ function storageJsonSet(key, value, context){ return storageSet(key, JSON.string
     }
   }catch(e){ try{ console.warn('[MD心智圖] preference migration', e); }catch(_){} }
 })();
+
+const HTML_DISPLAY_MODES=Object.freeze({text:'text',safe:'safe'});
+function normalizeHtmlDisplayMode(value){ return value===HTML_DISPLAY_MODES.safe ? value : HTML_DISPLAY_MODES.text; }
+let htmlDisplayMode=normalizeHtmlDisplayMode(storageGet(STORAGE_KEYS.htmlDisplayMode, HTML_DISPLAY_MODES.text, 'read HTML display mode'));
+function setHtmlDisplayMode(mode, remember=true){
+  htmlDisplayMode=normalizeHtmlDisplayMode(mode);
+  if(remember) storageSet(STORAGE_KEYS.htmlDisplayMode, htmlDisplayMode, 'save HTML display mode');
+  if(typeof render==='function') render();
+  if(remember) showToast('HTML 區塊顯示：'+(htmlDisplayMode===HTML_DISPLAY_MODES.safe?'安全顯示':'純文字'));
+}
 
 //===================== 資料模型 =====================
 let uidc = 0;
@@ -856,9 +880,9 @@ const trustedHtmlPolicy=(()=>{
     return null;
   }
 })();
-const SAFE_HTML_TAGS=new Set(['a','strong','em','del','sup','code','pre','img','table','thead','tbody','tr','th','td','small','span','svg','line','g','circle','path','rect']);
+const SAFE_HTML_TAGS=new Set(['a','strong','em','del','sup','sub','code','pre','img','table','thead','tbody','tr','th','td','small','span','br','hr','mark','kbd','p','div','blockquote','ul','ol','li','details','summary','h1','h2','h3','h4','h5','h6','svg','line','g','circle','path','rect']);
 const SAFE_SVG_TAGS=new Set(['svg','line','g','circle','path','rect']);
-const SAFE_HTML_ATTRS=new Set(['class','href','title','rel','alt','src','loading','draggable','data-fnid','aria-hidden','preserveaspectratio','style']);
+const SAFE_HTML_ATTRS=new Set(['class','href','title','rel','alt','src','loading','draggable','data-fnid','aria-hidden','preserveaspectratio','style','open']);
 const SAFE_SVG_ATTRS=new Set(['class','aria-hidden','preserveaspectratio','x','y','x1','y1','x2','y2','cx','cy','r','width','height','d','fill','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','style']);
 function safeSvgAttribute(name,value){
   const v=String(value||'').trim();
@@ -894,6 +918,7 @@ function sanitizeTrustedMarkup(html, namespaceURI){
         if(name==='loading' && attrValue!=='lazy') node.removeAttribute(attr.name);
         if(name==='draggable' && attrValue!=='false') node.removeAttribute(attr.name);
         if(name==='rel' && attrValue!=='noopener noreferrer') node.removeAttribute(attr.name);
+        if(name==='open' && tag!=='details') node.removeAttribute(attr.name);
       });
       sanitizeChildren(node);
     });
@@ -920,6 +945,22 @@ function setTrustedHTML(el, html, reason){
 function setSafeText(el, value){
   if(!el) return el;
   el.textContent=String(value==null?'':value);
+  return el;
+}
+function renderHtmlBlockContent(el, raw){
+  if(!el) return el;
+  clearTrustedHTML(el);
+  const source=String(raw==null?'':raw);
+  if(htmlDisplayMode===HTML_DISPLAY_MODES.safe){
+    setTrustedHTML(el, source, 'markdown HTML safe display');
+    el.classList.add('htmlsafe');
+    if(!el.childNodes.length){
+      const fallback=document.createElement('pre'); fallback.className='mdhtmlraw'; setSafeText(fallback, source); el.appendChild(fallback);
+    }
+  }else{
+    el.classList.remove('htmlsafe');
+    const rawEl=document.createElement('pre'); rawEl.className='mdhtmlraw'; setSafeText(rawEl, source); el.appendChild(rawEl);
+  }
   return el;
 }
 function clearTrustedHTML(el){ el.textContent=''; return el; }
@@ -1622,7 +1663,7 @@ function parseMarkdown(text){
       last = stack.length ? stack[stack.length-1].node : cur;
       li=j; continue;
     }
-    // HTML 區塊:保留原文,畫面以安全的程式碼樣式顯示,不直接執行 HTML。
+    // HTML 區塊:保留原文;畫面預設純文字,可切換成白名單安全顯示。
     if(isHtmlBlockStart(line)){
       noteOpen=false; paraNode=null; clearListParent(); clearNoteTarget(); ensureRoot(); if(cur._srcLine==null) cur._srcLine=li;
       const hlines=[line]; const tag=htmlBlockTag(line); let j=li+1;
@@ -2109,6 +2150,7 @@ function render(){
       tx.appendChild(ti); tx.appendChild(bd);
     }
     else if(n.kind==='hr'){ setTrustedHTML(tx, '<svg class="mdhr" aria-hidden="true" preserveAspectRatio="none"><line class="mdhrline" x1="0" y1="7" x2="100%" y2="7"/><g class="hrhandle"><circle cx="9" cy="7" r="6"/><line class="hrhandleGrip" x1="7" y1="4.5" x2="7" y2="9.5"/><line class="hrhandleGrip" x1="11" y1="4.5" x2="11" y2="9.5"/></g></svg>', 'markdown horizontal rule svg'); d.classList.add('hrnode'); d.title='Markdown 水平分隔線: '+(n.title||'---')+'；可抓左側握把拖曳排序'; }
+    else if(n.kind==='html' || n.htmlRaw){ tx.classList.add('hashtml'); d.classList.add('htmlnode'); renderHtmlBlockContent(tx, n.htmlRaw||n.code||''); d.title='Markdown HTML 區塊：'+(htmlDisplayMode===HTML_DISPLAY_MODES.safe?'白名單安全顯示':'純文字顯示'); }
     else if(n.table){ tx.classList.add('hastable'); setTrustedHTML(tx, tableHtml(n.table), 'markdown table'); d.classList.add('tablenode'); }
     else if(n.code!=null){ tx.classList.add('hascode'); setTrustedHTML(tx, '<pre class="mdpre"><code>'+escHtml(n.code)+'</code></pre>', 'markdown code block'); d.classList.add('codenode'); }
     else setTrustedHTML(tx, n.title ? inlineMd(n.title) : ' ', 'node inline markdown');
@@ -4311,6 +4353,8 @@ function getCommandItems(){
     {label:'匯出 PDF', hint:'圖面', aliases:'pdf export not source save', fn:exportPDF},
     {label:'搜尋節點', hint:'檢視', aliases:'find search', fn:openSearch},
     {label:'置中縮放', hint:'檢視', aliases:'fit center zoom', fn:fit},
+    {label:'HTML 區塊：純文字', hint:'檢視', aliases:'html block text raw plain', fn:()=>setHtmlDisplayMode('text')},
+    {label:'HTML 區塊：安全顯示', hint:'檢視', aliases:'html block safe allowlist render', fn:()=>setHtmlDisplayMode('safe')},
     {label:'深色介面', hint:'外觀', aliases:'dark mode', fn:()=>applyDark(true)},
     {label:'淺色介面', hint:'外觀', aliases:'light mode', fn:()=>applyDark(false)},
     {label:'工具列歸位', hint:'檢視', aliases:'reset floating toolbar ui', fn:resetFloatWins},
@@ -4405,6 +4449,10 @@ function buildMainMenuItems(){
     {label:'🎯 置中', fn:fit},
     {label:'🔍 搜尋', key:'⌃F', fn:openSearch},
     {label: mdPanelOpen?'📝 關閉原始碼面板':'📝 原始 Markdown 面板', fn:()=>toggleMdPanel()},
+    {label:'HTML 區塊顯示', sub:[
+      {label:htmlDisplayMode===HTML_DISPLAY_MODES.text?'✓ 純文字（不渲染）':'純文字（不渲染）', fn:()=>setHtmlDisplayMode('text')},
+      {label:htmlDisplayMode===HTML_DISPLAY_MODES.safe?'✓ 安全顯示（白名單）':'安全顯示（白名單）', fn:()=>setHtmlDisplayMode('safe')}
+    ]},
     {label: isDark?'☀️ 淺色介面':'🌙 深色介面', fn:()=>applyDark(!isDark)},
     {label:'↔ 節點寬度', sub:[
       {label:'40 字', fn:()=>applyNodeWrapWidth('narrow', true)},
@@ -4803,6 +4851,21 @@ function runMarkdownRuleSelfTest(options={}){
     parsed=parseMarkdown('# T\n<details>\n<summary>標題</summary>\n內容\n</details>\n');
     out=toMarkdown(parsed);
     add('HTML 區塊安全顯示但匯出保留原文', /<details>[\s\S]*<\/details>/.test(out), out);
+    const htmlDisplayProbe=document.createElement('div');
+    const htmlDisplayReady=typeof renderHtmlBlockContent==='function' && typeof setHtmlDisplayMode==='function';
+    let htmlDisplayDetail='尚未提供 HTML 顯示模式';
+    if(htmlDisplayReady){
+      const savedMode=htmlDisplayMode;
+      setHtmlDisplayMode('text', false);
+      renderHtmlBlockContent(htmlDisplayProbe, '<strong>純文字</strong>');
+      const rawOk=!!htmlDisplayProbe.querySelector('.mdhtmlraw') && htmlDisplayProbe.textContent.includes('<strong>純文字</strong>');
+      setHtmlDisplayMode('safe', false);
+      renderHtmlBlockContent(htmlDisplayProbe, '<strong>安全</strong><scr'+'ipt>window.__htmlDisplayBad=1</scr'+'ipt>');
+      const safeOk=!!htmlDisplayProbe.querySelector('strong') && !htmlDisplayProbe.querySelector('script');
+      htmlDisplayDetail=`純文字:${rawOk};安全顯示:${safeOk}`;
+      setHtmlDisplayMode(savedMode, false);
+    }
+    add('HTML 區塊支援純文字與白名單安全顯示', htmlDisplayReady && htmlDisplayDetail==='純文字:true;安全顯示:true', htmlDisplayDetail);
     parsed=parseMarkdown('# T\n> 第一層\n> > 第二層\n');
     out=toMarkdown(parsed);
     add('引用節點保留巢狀引用 marker', /^> > 第二層$/m.test(out), out);
