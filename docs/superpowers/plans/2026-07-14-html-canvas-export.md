@@ -100,6 +100,6 @@ window.runMindMapFullSelfTest({log: true, report: false})
 
 分別切換兩種 HTML 顯示模式，匯出或擷取 Canvas，確認純文字為灰底等寬框，安全模式可看見 summary、段落、兩個項目與行內樣式。
 
-- [ ] **Step 4: 更新 v10.70 並部署**
+- [x] **Step 4: 更新 v10.70 並部署**
 
 同步 `APP_VERSION`、`APP_DATE`、畫面版號、changelog 與 `README.md`，提交並推送 `master`。等待 Pages Action 成功後以 cache-busting query 驗證正式網站。
