@@ -122,7 +122,7 @@ Expected: `baseline browser self-test: 11 passed, 0 failed`。若失敗，停止
 
 - [ ] **Step 5: 用瀏覽器自動化記錄 v10.72 console 基準**
 
-在同一個本機 URL `http://127.0.0.1:8772/index.html?ci-selftest=1` 開啟全新的 Chrome 自動化頁面，清空載入前紀錄後重新載入，等待 `<body data-ci-self-test="pass">`，再讀取所有 `console` 與未捕捉的 page error。
+重新啟動與 Step 4 相同的 Python server，確認 `http://127.0.0.1:8772/index.html` 可連線；在 `http://127.0.0.1:8772/index.html?ci-selftest=1` 開啟全新的 Chrome 自動化頁面，清空載入前紀錄後重新載入，等待 `<body data-ci-self-test="pass">`，再讀取所有 `console` 與未捕捉的 page error。完成後停止這次 Python server。
 
 Expected: page error 為 0、console error 為 0；既有 Canvas `getImageData` 的 `willReadFrequently` warning 若仍出現，只記錄數量作為基準，不把它誤判為本次品牌修改造成的錯誤。
 
