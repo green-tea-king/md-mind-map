@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  版次 Version : 10.72
-  最後更新 Updated: 2026-07-14
+  Version: v10.73
+  Last updated: 2026-07-17
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
@@ -24,6 +24,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-17 v10.73：現行產品品牌統一為 MK2MD；同步瀏覽器標題、品牌卡、診斷、console 標籤、預設 Markdown、匯出 fallback、README 與專案規範；新增品牌回歸自我測試。
      2026-07-14  v10.72 GitHub Pages 新增瀏覽器自檢部署閘門:發布前以無頭 Chrome 執行完整 11 組自檢,失敗時停止部署。
      2026-07-14  v10.71 搜尋工具改為按需顯示:平常完全隱藏,僅由 Ctrl+F、右鍵選單或命令面板開啟,Esc 與關閉按鈕會再次隱藏整個搜尋窗。
      2026-07-14  v10.70 JPG/PDF 完整支援 HTML 區塊:純文字保留灰底等寬框,安全顯示保留 summary、段落、清單與行內格式;匯出稽核與自檢同步補強。
@@ -266,7 +267,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MD心智圖</title>
+<title>MK2MD</title>
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232830">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
@@ -681,7 +682,7 @@
 </div>
 
 <!-- 浮動工具視窗(可拖曳標題列移動,點 — 收合) -->
-<div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 MD心智圖</div><div class="fwver"><span id="appVer"></span><span id="saveState" class="save-state saved">已匯出</span><span id="saveInfo" class="save-info"></span></div></div>
+<div class="floatwin" id="fwBrand"><div class="fwhead fwbrand">🧠 <span id="brandName">MK2MD</span></div><div class="fwver"><span id="appVersion"></span><span id="saveState" class="save-state saved">已匯出</span><span id="saveInfo" class="save-info"></span></div></div>
 
 <div class="floatwin" id="fwSearch" aria-hidden="true">
   <div class="fwhead">搜尋<button class="fwcollapse" title="收合">–</button></div>
@@ -723,13 +724,18 @@
   8. 啟動範例與初始化
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
-const APP_NAME    = 'MD心智圖';
-const APP_VERSION = '10.72';        // 版次:小改 +0.1,大改 +1.0
-const APP_TITLE   = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE    = '2026-07-14'; // 最後更新日期 YYYY-MM-DD
-function syncAppTitle(){ if(document.title!==APP_TITLE) document.title=APP_TITLE; }
+const APP_NAME = 'MK2MD';
+const APP_VERSION = '10.73';
+const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
+const APP_DATE = '2026-07-17';
+function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
-{ const v=document.getElementById('appVer'); if(v) v.textContent='v'+APP_VERSION+' · '+APP_DATE; }
+{
+  const brand = document.getElementById('brandName');
+  if(brand) brand.textContent = APP_NAME;
+  const version = document.getElementById('appVersion');
+  if(version) version.textContent = 'v' + APP_VERSION + ' · ' + APP_DATE;
+}
 const saveStateEl = document.getElementById('saveState');
 const saveInfoEl = document.getElementById('saveInfo');
 const PREF_VERSION='9.82';
@@ -755,7 +761,7 @@ const PREF_KEYS=[
 ];
 function storageReport(err, context){
   if(typeof logCaught==='function') return logCaught(err, context);
-  try{ console.warn('[MD心智圖]', context, err); }catch(_){}
+  try{ console.warn('[' + APP_NAME + ']', context, err); }catch(_){}
   return null;
 }
 function storageGet(key, fallback=null, context){
@@ -783,7 +789,7 @@ function storageJsonSet(key, value, context){ return storageSet(key, JSON.string
       for(const k of PREF_KEYS) storageRemove(k, 'migrate preference '+k);
       storageSet(STORAGE_KEYS.prefVersion, PREF_VERSION, 'save preference version');
     }
-  }catch(e){ try{ console.warn('[MD心智圖] preference migration', e); }catch(_){} }
+  }catch(e){ try{ console.warn('[' + APP_NAME + '] preference migration', e); }catch(_){} }
 })();
 
 const HTML_DISPLAY_MODES=Object.freeze({text:'text',safe:'safe'});
@@ -881,7 +887,7 @@ const trustedHtmlPolicy=(()=>{
       createHTML(value){ return String(value==null?'':value); }
     }) : null;
   }catch(e){
-    try{ console.warn('[MD心智圖] Trusted Types policy unavailable', e); }catch(_){ }
+    try{ console.warn('[' + APP_NAME + '] Trusted Types policy unavailable', e); }catch(_){ }
     return null;
   }
 })();
@@ -980,7 +986,7 @@ function logCaught(err, context){
   mmErrorLog.push(item);
   if(mmErrorLog.length>80) mmErrorLog.shift();
   if(window.__MM_DEBUG_ERRORS || (typeof debugLayout!=='undefined' && debugLayout)){
-    try{ console.warn('[MD心智圖]', item.context, err); }catch(_){}
+    try{ console.warn('[' + APP_NAME + ']', item.context, err); }catch(_){}
   }
   return item;
 }
@@ -1047,7 +1053,7 @@ function nodeAriaLabel(n){
 }
 function collectDiagnostics(){
   return {
-    app:'MD心智圖',
+    app:APP_NAME,
     version:APP_VERSION,
     date:APP_DATE,
     url:location.href,
@@ -3027,8 +3033,8 @@ function renderMapToCanvas(options={}){
 window.auditMindMapExportSupport=auditExportSupport;
 function _dl(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); }
 function _dlData(durl,name){ const a=document.createElement('a'); a.href=durl; a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
-function _safeFileBase(base){ return String(base||'心智圖').replace(/[\\/:*?"<>|]+/g,'_').trim()||'心智圖'; }
-function _expName(ext){ const base=(currentName || (roots[0]&&(roots[0].title||'').split('\n')[0].trim()) || '心智圖'); return _safeFileBase(base)+'.'+ext; }
+function _safeFileBase(base){ return (String(base || APP_NAME).trim() || APP_NAME).replace(/[\\/:*?"<>|]/g, '_').slice(0, 120); }
+function _expName(ext){ const rootTitle = roots && roots[0] && roots[0].title; return _safeFileBase(currentName || rootTitle || APP_NAME) + '.' + ext; }
 function _wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
 async function settleBeforeExport(){
   flushPendingMdText();
@@ -4895,6 +4901,10 @@ function runTemplateSelfTest(options={}){
     const parsed=parseMarkdown(DEFAULT_MARKDOWN);
     const stats=collectTemplateStats(parsed);
     const exported=toMarkdown(parsed);
+    add('內建範本使用 MK2MD 品牌標題',
+      /^# MK2MD · 使用說明$/m.test(DEFAULT_MARKDOWN)
+      && /^# MK2MD · 使用說明$/m.test(exported),
+      'MK2MD');
     add('範本可解析成多中心心智圖', stats.roots>=2, `${stats.roots} roots`);
     add('範本節點數足夠覆蓋主要功能', stats.nodes>=120, `${stats.nodes} nodes`);
     add('開頭序言節點存在', stats.preamble>=1, `${stats.preamble} preamble`);
@@ -5361,6 +5371,33 @@ selfTestCollapseEl&&selfTestCollapseEl.addEventListener('click', ()=>setReportGr
 function runCommandPaletteSelfTest(options={}){
   const checks=[]; const add=(name, ok, detail='')=>checks.push({name, ok:!!ok, detail:String(detail||'')});
   try{
+    const brandNameEl = document.getElementById('brandName');
+    const diagnostics = collectDiagnostics();
+    add('現行品牌名稱集中為 MK2MD',
+      APP_NAME === 'MK2MD'
+      && APP_VERSION === '10.73'
+      && APP_DATE === '2026-07-17'
+      && APP_TITLE === 'MK2MD v10.73'
+      && document.title === APP_TITLE
+      && !!brandNameEl
+      && brandNameEl.textContent === APP_NAME
+      && diagnostics.app === APP_NAME,
+      [APP_NAME, APP_VERSION, APP_DATE, APP_TITLE, document.title,
+        brandNameEl && brandNameEl.textContent, diagnostics.app].join('|'));
+    const savedCurrentName = currentName;
+    const savedRoots = roots;
+    try{
+      currentName = '';
+      roots = [];
+      const fallbackExportName = _expName('md');
+      add('無文件名稱時匯出 fallback 使用 MK2MD',
+        _safeFileBase('') === APP_NAME
+        && fallbackExportName === APP_NAME + '.md',
+        fallbackExportName);
+    }finally{
+      currentName = savedCurrentName;
+      roots = savedRoots;
+    }
     const commands=getCommandItems();
     const textProbe=document.createElement('div');
     setSafeText(textProbe,'<b>使用者文字</b>');
@@ -5670,7 +5707,7 @@ const DEFAULT_MARKDOWN = `這是一段 Markdown 開頭序言,因為它寫在第�
 
 ---
 
-# MD心智圖 · 使用說明
+# MK2MD · 使用說明
 > 【根節點 # 的註解】這份說明會帶你快速上手所有功能。
 > 緊接在標題下方的引言,會收進標題泡泡內當「註解」(泡泡中有泡泡)。
 ## 🚀 三步上手
@@ -5826,7 +5863,7 @@ Setext H2 寫法
 - 重新檢查:修正問題後可在報告上直接刷新清單,不用重新執行匯出
 - 忽略本次提醒:只關閉目前這次報告,不會改變永久檢查設定
 - 報告按鈕主次:重新檢查是主要動作,安全修正是輔助動作,忽略本次使用低調樣式
-- 分頁標題:瀏覽器分頁會顯示 MD心智圖 與目前版號,避免舊分頁顯示未命名
+- 分頁標題:瀏覽器分頁會顯示 MK2MD 與目前版號,避免舊分頁顯示未命名
 - 分隔線拖曳:低縮放時,分隔線上下仍保留螢幕像素熱區,比較容易抓取
 - 分隔線握把:滑過或選取分隔線時,左側會顯示拖曳握把提示
 - 嚴重度分組:匯出前檢查會分成錯誤、警告、建議,優先處理錯誤再看警告
