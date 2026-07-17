@@ -1,6 +1,6 @@
 # MK2MD 專案維護規範
 
-本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.75`（`2026-07-17`）。預設使用台灣繁體中文協作。
+本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.76`（`2026-07-17`）。預設使用台灣繁體中文協作。
 
 ## 1. 工作範圍與優先順序
 
@@ -82,6 +82,7 @@
 ## 7. 必要驗證
 
 - 用 Node `vm.Script` 解析 HTML header comment 之後抽出的 app script；應為 1 個 inline script。
+- 執行 `node scripts/check-version-consistency.test.js` 與 `node scripts/check-version-consistency.js`；測試與實際 repository gate 都必須通過。
 - `git diff --check` 必須無輸出。
 - 以本機 HTTP server 與 installed Chrome 執行 `?ci-selftest=1`；應為 `11/11`、0 failed。
 - 真實瀏覽器確認 `document.title`、`#brandName`、page error 與 console error；error 必須為 0。
