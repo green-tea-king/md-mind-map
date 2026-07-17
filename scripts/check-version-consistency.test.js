@@ -143,6 +143,47 @@ test('reports a duplicated current field as a structure error', () => {
   assert.match(issueFor(result, 'README Current Version').actual, /2 matches/);
 });
 
+test('aggregates independent structure errors when the baseline is missing', () => {
+  const sources = consistentSources();
+  sources.agentsText = sources.agentsText.replace(
+    '本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.76`（`2026-07-17`）。預設使用台灣繁體中文協作。',
+    ''
+  );
+  sources.indexText = sources.indexText.replace("const APP_DATE = '2026-07-17';\n", '');
+  sources.readmeText = sources.readmeText.replace(
+    '- Version: `v10.76`',
+    '- Version: `v10.76`\n- Version: `v10.76`'
+  );
+
+  const result = validateVersionConsistency(sources);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.version, '');
+  assert.equal(result.date, '');
+  assert.deepEqual(result.issues.map((issue) => issue.field), [
+    'AGENTS.md baseline',
+    'index.html APP_DATE',
+    'README Current Version'
+  ]);
+});
+
+test('does not guess value mismatches when the baseline is missing', () => {
+  const sources = consistentSources();
+  sources.agentsText = sources.agentsText.replace(
+    '本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.76`（`2026-07-17`）。預設使用台灣繁體中文協作。',
+    ''
+  );
+  sources.indexText = sources.indexText.replace("const APP_VERSION = '10.76';", "const APP_VERSION = '0.00';");
+
+  const result = validateVersionConsistency(sources);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.version, '');
+  assert.equal(result.date, '');
+  assert.deepEqual(result.issues.map((issue) => issue.field), ['AGENTS.md baseline']);
+  assert.equal(issueFor(result, 'index.html APP_VERSION'), undefined);
+});
+
 if (failed > 0) {
   console.error(`Version consistency tests failed: ${failed}/${passed + failed}.`);
   process.exitCode = 1;
