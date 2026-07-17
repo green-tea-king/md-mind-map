@@ -77,6 +77,7 @@ function consistentSources() {
       '## Local Files'
     ].join('\n'),
     indexText: [
+      '<!DOCTYPE html>',
       '<!--',
       '  Version: v10.76',
       '  Last updated: 2026-07-17',
@@ -122,6 +123,18 @@ test('accepts a consistent current version while ignoring older Changelog entrie
   assert.equal(result.version, '10.76');
   assert.equal(result.date, '2026-07-17');
   assert.deepEqual(result.issues, []);
+});
+
+test('rejects markup inserted between the DOCTYPE and header comment', () => {
+  const sources = consistentSources();
+  sources.indexText = sources.indexText.replace('<!DOCTYPE html>\n<!--', '<!DOCTYPE html>\n<div></div>\n<!--');
+  const result = validateVersionConsistency(sources);
+  assert.equal(result.ok, false);
+  assert.deepEqual(issueFor(result, 'index.html header comment'), {
+    field: 'index.html header comment',
+    expected: 'exactly 1 header comment immediately after the leading DOCTYPE',
+    actual: '0 matches'
+  });
 });
 
 test('reports an APP_VERSION mismatch', () => {
@@ -256,12 +269,12 @@ function validateVersionConsistency({ agentsText, readmeText, indexText }) {
   }
 
   const [version, date] = baseline;
-  const headerMatches = Array.from(indexText.matchAll(/^\s*<!--([\s\S]*?)-->/g));
+  const headerMatches = Array.from(indexText.matchAll(/^\s*<!DOCTYPE html>\s*<!--([\s\S]*?)-->/gi));
   let header = null;
   if (headerMatches.length !== 1) {
     issues.push({
       field: 'index.html header comment',
-      expected: 'exactly 1 leading header comment',
+      expected: 'exactly 1 header comment immediately after the leading DOCTYPE',
       actual: `${headerMatches.length} matches`
     });
   } else {
@@ -365,7 +378,7 @@ node scripts/check-version-consistency.js
 
 Expected before the v10.76 release sync:
 
-- Tests: `Version consistency tests passed: 7/7.`
+- Tests: `Version consistency tests passed: 8/8.`
 - Real repository gate: `Version consistency gate passed: v10.75 (2026-07-17).`
 
 - [ ] **Step 5: Run a mutation probe without writing files**
@@ -544,7 +557,7 @@ node scripts/check-version-consistency.js
 Expected:
 
 - Workflow order message passes.
-- Unit/contract tests pass 7/7.
+- Unit/contract tests pass 8/8.
 - Repository gate prints `Version consistency gate passed: v10.76 (2026-07-17).`
 
 - [ ] **Step 5: Verify script syntax and the unchanged app script**
