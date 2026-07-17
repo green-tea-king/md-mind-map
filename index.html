@@ -2,16 +2,13 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.74
+  Version: v10.75
   Last updated: 2026-07-17
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
-     每次修改完成後,務必同步更新「版次」與「最後更新日期」,共三處:
-       (1) 本註解上方的「版次 Version」與「最後更新 Updated」
-       (2) 下方 <script> 內的常數  APP_VERSION 與 APP_DATE
-       (3) 在下方「修改紀錄 Changelog」最上方新增一行
-            格式:日期(YYYY-MM-DD) / 版次 / 變更摘要
-     版次原則:小改 +0.1,大改 +1.0。畫面左上角會顯示目前版次與日期。
+     每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
+     本檔至少包含 Version / Last updated、APP_VERSION / APP_DATE、最新 Changelog 與品牌自我測試版本預期值。
+     版次規則以根目錄 `AGENTS.md` 為準。畫面左上角會顯示目前版次與日期。
   ------------------------------------------------------------
   單檔區塊導覽(仍維持單一 HTML,但依責任區塊維護):
      A. <style>                 : 視覺樣式、節點樣式、Markdown 特殊節點樣式、深色模式
@@ -24,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-17 v10.75：統一版本維護規則；index.html 檔頭改以 AGENTS.md 為準，AGENTS 補齊自身與品牌自我測試的版本同步位置。
   - 2026-07-17 v10.74：新增受版本控制的 AGENTS.md，集中協作、安全、版本、驗證與原平台部署規則；README 加入正式維護入口。
   - 2026-07-17 v10.73：現行產品品牌統一為 MK2MD；同步瀏覽器標題、品牌卡、診斷、console 標籤、預設 Markdown、匯出 fallback、README 與專案規範；新增品牌回歸自我測試。
      2026-07-14  v10.72 GitHub Pages 新增瀏覽器自檢部署閘門:發布前以無頭 Chrome 執行完整 11 組自檢,失敗時停止部署。
@@ -726,7 +724,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.74';
+const APP_VERSION = '10.75';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-07-17';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5376,9 +5374,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.74'
+      && APP_VERSION === '10.75'
       && APP_DATE === '2026-07-17'
-      && APP_TITLE === 'MK2MD v10.74'
+      && APP_TITLE === 'MK2MD v10.75'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

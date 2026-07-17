@@ -1,6 +1,6 @@
 # MK2MD 專案維護規範
 
-本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.74`（`2026-07-17`）。預設使用台灣繁體中文協作。
+本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.75`（`2026-07-17`）。預設使用台灣繁體中文協作。
 
 ## 1. 工作範圍與優先順序
 
@@ -69,10 +69,13 @@
 
 每次版本至少同步：
 
-1. `index.html` 檔頭 Version 與 Last updated。
-2. `APP_VERSION` 與 `APP_DATE`。
-3. 最新 Changelog 項目。
-4. README Current Version、日期與部署範例。
+1. `AGENTS.md` 首段基準版本與日期。
+2. `index.html` 檔頭 Version 與 Last updated。
+3. `APP_VERSION` 與 `APP_DATE`。
+4. 最新 Changelog 項目。
+5. 品牌自我測試內的 `APP_VERSION === '<current>'` 預期值。
+6. 品牌自我測試內的 `APP_TITLE === 'MK2MD v<current>'` 預期值。
+7. README Current Version、日期與部署範例。
 
 不要改寫舊 Changelog 或歷史檔名。
 
