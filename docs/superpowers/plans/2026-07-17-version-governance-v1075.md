@@ -84,6 +84,7 @@ if($paths.Count -ne 7 -or $mismatches.Count){
   throw "Untracked mismatch: count=$($paths.Count); $($mismatches -join ',')"
 }
 git $gitDir $workTree diff --exit-code -- PROJECT_RULES.md .github/workflows/pages.yml
+git $gitDir $workTree diff --exit-code origin/master..HEAD -- PROJECT_RULES.md .github/workflows/pages.yml
 'protected files and seven untracked: unchanged'
 ```
 
@@ -94,7 +95,10 @@ Expected: `protected files and seven untracked: unchanged`。
 Run from the repository root:
 
 ```powershell
-node -e "const fs=require('fs');const a=fs.readFileSync('AGENTS.md','utf8'),h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8');const checks=[['AGENTS baseline',/基準版本為 .*v10\.75/.test(a)],['AGENTS self sync',/AGENTS\.md.{0,3}首段基準版本與日期/.test(a)],['AGENTS test version sync',/APP_VERSION === '<current>'/.test(a)],['AGENTS test title sync',/APP_TITLE === 'MK2MD v<current>'/.test(a)],['header version',/Version: v10\.75/.test(h)],['header rule',/版次規則以根目錄 .*AGENTS\.md.*為準/.test(h)],['old header removed',!/小改 \+0\.1,大改 \+1\.0/.test(h)],['changelog',/2026-07-17 v10\.75/.test(h)],['runtime version',/const APP_VERSION = '10\.75';/.test(h)],['test version',/APP_VERSION === '10\.75'/.test(h)],['test title',/APP_TITLE === 'MK2MD v10\.75'/.test(h)],['README version',/Version: .*v10\.75/.test(r)],['README deploy',/Deploy v10\.75/.test(r)]];const failed=checks.filter(([,ok])=>!ok).map(([name])=>name);if(failed.length)throw new Error('v10.75 governance missing: '+failed.join(', '));console.log('v10.75 governance contract: '+checks.length+'/'+checks.length+' passed');"
+$governance = @'
+const fs=require('fs');const a=fs.readFileSync('AGENTS.md','utf8'),h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8');const firstBodyParagraph=s=>{const lines=s.replace(/^\uFEFF/,'').split(/\r?\n/);let i=0;while(i<lines.length&&(/^\s*$/.test(lines[i])||/^\s*#/.test(lines[i])))i++;const out=[];while(i<lines.length&&!/^\s*$/.test(lines[i]))out.push(lines[i++]);return out.join('\n')};const section=(s,re)=>(s.match(re)||[])[0]||'';const aFirst=firstBodyParagraph(a),a6=section(a,/^## 6\. 版本規則[^\S\r\n]*\r?\n[\s\S]*?(?=^## 7\.)/m),rv=section(r,/^## Current Version[^\S\r\n]*\r?\n[\s\S]*?(?=^## Main Features[^\S\r\n]*\r?$)/m),rd=section(r,/^## Deployment[^\S\r\n]*\r?\n[\s\S]*?(?=^## Local Files[^\S\r\n]*\r?$)/m),headerStart=h.indexOf('<!--'),headerEnd=h.indexOf('-->',headerStart),header=headerStart>=0&&headerEnd>=0?h.slice(headerStart,headerEnd+3):'',marker='修改紀錄 Changelog(最新在最上):',markerAt=header.indexOf(marker),after=markerAt>=0?header.slice(markerAt+marker.length):'',latest=((after.match(/^[ \t]*-[ \t]+([^\r\n]*)/m)||[])[1]||'');const checks=[['AGENTS baseline',aFirst==='本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.75`（`2026-07-17`）。預設使用台灣繁體中文協作。'],['AGENTS self sync',/^\s*1\. `AGENTS\.md` 首段基準版本與日期。$/m.test(a6)],['AGENTS test version sync',/^\s*5\. 品牌自我測試內的 `APP_VERSION === '<current>'` 預期值。$/m.test(a6)],['AGENTS test title sync',/^\s*6\. 品牌自我測試內的 `APP_TITLE === 'MK2MD v<current>'` 預期值。$/m.test(a6)],['header version',/^[ \t]*Version: v10\.75[ \t]*$/m.test(header)],['header rule',/^[ \t]*版次規則以根目錄 `AGENTS\.md` 為準。畫面左上角會顯示目前版次與日期。[ \t]*$/m.test(header)],['old header removed',!/小改 \+0\.1,大改 \+1\.0/.test(header)],['changelog',/^2026-07-17 v10\.75：/.test(latest)],['runtime version',/^const APP_VERSION = '10\.75';$/m.test(h)],['test version',/^[ \t]*&& APP_VERSION === '10\.75'$/m.test(h)],['test title',/^[ \t]*&& APP_TITLE === 'MK2MD v10\.75'$/m.test(h)],['README version',/^- Version: `v10\.75`$/m.test(rv)&&/^- Date: `2026-07-17`$/m.test(rv)],['README deploy',/^\.\\deploy\.ps1 -Message "Deploy v10\.75"$/m.test(rd)]];const failed=checks.filter(([,ok])=>!ok).map(([name])=>name);if(failed.length)throw new Error('v10.75 governance missing: '+failed.join(', '));console.log('v10.75 governance contract: '+checks.length+'/'+checks.length+' passed');
+'@
+node -e $governance
 ```
 
 Expected: exit code 1，錯誤包含 `v10.75 governance missing:`，並列出目前尚未實作的 v10.75 baseline、完整同步清單、header rule、版本來源與 README 項目。若因路徑、編碼或 JavaScript 語法失敗，先修正測試指令再重跑；不可把非需求失敗當 RED。
@@ -217,7 +221,10 @@ Keep `APP_NAME = 'MK2MD'` and `APP_DATE = '2026-07-17'` unchanged.
 Run from the repository root:
 
 ```powershell
-node -e "const fs=require('fs');const a=fs.readFileSync('AGENTS.md','utf8'),h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8');const checks=[['AGENTS baseline',/基準版本為 .*v10\.75/.test(a)],['AGENTS self sync',/AGENTS\.md.{0,3}首段基準版本與日期/.test(a)],['AGENTS test version sync',/APP_VERSION === '<current>'/.test(a)],['AGENTS test title sync',/APP_TITLE === 'MK2MD v<current>'/.test(a)],['header version',/Version: v10\.75/.test(h)],['header rule',/版次規則以根目錄 .*AGENTS\.md.*為準/.test(h)],['old header removed',!/小改 \+0\.1,大改 \+1\.0/.test(h)],['changelog',/2026-07-17 v10\.75/.test(h)],['runtime version',/const APP_VERSION = '10\.75';/.test(h)],['test version',/APP_VERSION === '10\.75'/.test(h)],['test title',/APP_TITLE === 'MK2MD v10\.75'/.test(h)],['README version',/Version: .*v10\.75/.test(r)],['README deploy',/Deploy v10\.75/.test(r)]];const failed=checks.filter(([,ok])=>!ok).map(([name])=>name);if(failed.length)throw new Error('v10.75 governance missing: '+failed.join(', '));console.log('v10.75 governance contract: '+checks.length+'/'+checks.length+' passed');"
+$governance = @'
+const fs=require('fs');const a=fs.readFileSync('AGENTS.md','utf8'),h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8');const firstBodyParagraph=s=>{const lines=s.replace(/^\uFEFF/,'').split(/\r?\n/);let i=0;while(i<lines.length&&(/^\s*$/.test(lines[i])||/^\s*#/.test(lines[i])))i++;const out=[];while(i<lines.length&&!/^\s*$/.test(lines[i]))out.push(lines[i++]);return out.join('\n')};const section=(s,re)=>(s.match(re)||[])[0]||'';const aFirst=firstBodyParagraph(a),a6=section(a,/^## 6\. 版本規則[^\S\r\n]*\r?\n[\s\S]*?(?=^## 7\.)/m),rv=section(r,/^## Current Version[^\S\r\n]*\r?\n[\s\S]*?(?=^## Main Features[^\S\r\n]*\r?$)/m),rd=section(r,/^## Deployment[^\S\r\n]*\r?\n[\s\S]*?(?=^## Local Files[^\S\r\n]*\r?$)/m),headerStart=h.indexOf('<!--'),headerEnd=h.indexOf('-->',headerStart),header=headerStart>=0&&headerEnd>=0?h.slice(headerStart,headerEnd+3):'',marker='修改紀錄 Changelog(最新在最上):',markerAt=header.indexOf(marker),after=markerAt>=0?header.slice(markerAt+marker.length):'',latest=((after.match(/^[ \t]*-[ \t]+([^\r\n]*)/m)||[])[1]||'');const checks=[['AGENTS baseline',aFirst==='本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.75`（`2026-07-17`）。預設使用台灣繁體中文協作。'],['AGENTS self sync',/^\s*1\. `AGENTS\.md` 首段基準版本與日期。$/m.test(a6)],['AGENTS test version sync',/^\s*5\. 品牌自我測試內的 `APP_VERSION === '<current>'` 預期值。$/m.test(a6)],['AGENTS test title sync',/^\s*6\. 品牌自我測試內的 `APP_TITLE === 'MK2MD v<current>'` 預期值。$/m.test(a6)],['header version',/^[ \t]*Version: v10\.75[ \t]*$/m.test(header)],['header rule',/^[ \t]*版次規則以根目錄 `AGENTS\.md` 為準。畫面左上角會顯示目前版次與日期。[ \t]*$/m.test(header)],['old header removed',!/小改 \+0\.1,大改 \+1\.0/.test(header)],['changelog',/^2026-07-17 v10\.75：/.test(latest)],['runtime version',/^const APP_VERSION = '10\.75';$/m.test(h)],['test version',/^[ \t]*&& APP_VERSION === '10\.75'$/m.test(h)],['test title',/^[ \t]*&& APP_TITLE === 'MK2MD v10\.75'$/m.test(h)],['README version',/^- Version: `v10\.75`$/m.test(rv)&&/^- Date: `2026-07-17`$/m.test(rv)],['README deploy',/^\.\\deploy\.ps1 -Message "Deploy v10\.75"$/m.test(rd)]];const failed=checks.filter(([,ok])=>!ok).map(([name])=>name);if(failed.length)throw new Error('v10.75 governance missing: '+failed.join(', '));console.log('v10.75 governance contract: '+checks.length+'/'+checks.length+' passed');
+'@
+node -e $governance
 ```
 
 Expected: `v10.75 governance contract: 13/13 passed` with exit code 0. Do not alter its assertions after implementation.
@@ -228,7 +235,10 @@ Run:
 
 ```powershell
 node -e "const fs=require('fs');const s=fs.readFileSync('AGENTS.md','utf8');const required=[['MK2MD',/MK2MD/],['v10.75',/v10\.75/],['date',/2026-07-17/],['index',/index\.html/],['ui rules',/PROJECT_RULES\.md/],['selftest',/11\/11/],['repo',/green-tea-king\/md-mind-map/],['pages',/green-tea-king\.github\.io\/md-mind-map/],['delete confirmation',/刪除[^\n]*明確確認/],['no add dot',/禁止[^\n]*git add \./],['seven-item report',/1\. 這次做了什麼[\s\S]*7\. 尚未驗證/],['next task',/建議下一個任務/]];const missing=required.filter(([,re])=>!re.test(s)).map(([name])=>name);if(missing.length)throw new Error('Missing AGENTS rules: '+missing.join(','));console.log('AGENTS contract: '+required.length+'/'+required.length+' passed');"
-node -e "const fs=require('fs');const h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8'),a=fs.readFileSync('AGENTS.md','utf8');const c=[/Version: v10\.75/.test(h),/Last updated: 2026-07-17/.test(h),/const APP_VERSION = '10\.75';/.test(h),/const APP_DATE = '2026-07-17';/.test(h),/2026-07-17 v10\.75/.test(h),/Version: .*v10\.75/.test(r),/Date: .*2026-07-17/.test(r),/Deploy v10\.75/.test(r),/基準版本為 .*v10\.75/.test(a)];if(c.some(x=>!x))throw new Error('version consistency '+c.map(Number).join(''));console.log('version/document consistency: 9/9 passed');"
+$consistency = @'
+const fs=require('fs');const h=fs.readFileSync('index.html','utf8'),r=fs.readFileSync('README.md','utf8'),a=fs.readFileSync('AGENTS.md','utf8');const firstBodyParagraph=s=>{const lines=s.replace(/^\uFEFF/,'').split(/\r?\n/);let i=0;while(i<lines.length&&(/^\s*$/.test(lines[i])||/^\s*#/.test(lines[i])))i++;const out=[];while(i<lines.length&&!/^\s*$/.test(lines[i]))out.push(lines[i++]);return out.join('\n')};const section=(s,re)=>(s.match(re)||[])[0]||'';const aFirst=firstBodyParagraph(a),rv=section(r,/^## Current Version[^\S\r\n]*\r?\n[\s\S]*?(?=^## Main Features[^\S\r\n]*\r?$)/m),rd=section(r,/^## Deployment[^\S\r\n]*\r?\n[\s\S]*?(?=^## Local Files[^\S\r\n]*\r?$)/m),headerStart=h.indexOf('<!--'),headerEnd=h.indexOf('-->',headerStart),header=headerStart>=0&&headerEnd>=0?h.slice(headerStart,headerEnd+3):'',marker='修改紀錄 Changelog(最新在最上):',markerAt=header.indexOf(marker),after=markerAt>=0?header.slice(markerAt+marker.length):'',latest=((after.match(/^[ \t]*-[ \t]+([^\r\n]*)/m)||[])[1]||'');const c=[/^[ \t]*Version: v10\.75[ \t]*$/m.test(header),/^[ \t]*Last updated: 2026-07-17[ \t]*$/m.test(header),/^const APP_VERSION = '10\.75';$/m.test(h),/^const APP_DATE = '2026-07-17';$/m.test(h),/^2026-07-17 v10\.75：/.test(latest),/^- Version: `v10\.75`$/m.test(rv),/^- Date: `2026-07-17`$/m.test(rv),/^\.\\deploy\.ps1 -Message "Deploy v10\.75"$/m.test(rd),aFirst==='本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.75`（`2026-07-17`）。預設使用台灣繁體中文協作。'];if(c.some(x=>!x))throw new Error('version consistency '+c.map(Number).join(''));console.log('version/document consistency: 9/9 passed');
+'@
+node -e $consistency
 ```
 
 Expected:
@@ -274,6 +284,7 @@ if($paths.Count -ne 7 -or $mismatches.Count){
   throw "Untracked mismatch: count=$($paths.Count); $($mismatches -join ',')"
 }
 git $gitDir $workTree diff --exit-code -- PROJECT_RULES.md .github/workflows/pages.yml
+git $gitDir $workTree diff --exit-code origin/master..HEAD -- PROJECT_RULES.md .github/workflows/pages.yml
 'protected files and seven untracked: unchanged'
 ```
 
@@ -554,6 +565,7 @@ if($paths.Count -ne 7 -or $mismatches.Count){
   throw "Untracked mismatch: count=$($paths.Count); $($mismatches -join ',')"
 }
 git $gitDir $workTree diff --exit-code -- PROJECT_RULES.md .github/workflows/pages.yml
+git $gitDir $workTree diff --exit-code origin/master..HEAD -- PROJECT_RULES.md .github/workflows/pages.yml
 'protected files and seven untracked: unchanged'
 ```
 
@@ -590,5 +602,7 @@ Add a detailed `建議下一個任務` section after these seven items. Mention 
 - Spec coverage: AGENTS ownership、index header rule、v10.75 sources、two hard-coded expected values、README、RED/GREEN、protected hashes、browser 11/11、allowlist staging、original Pages deployment and fixed reporting all map to explicit steps。
 - Scope control: no workflow、PROJECT_RULES、local tools/docs、backups、product behavior、dependencies or platform changes are planned。
 - Interface consistency: v10.75、2026-07-17、MK2MD、port 8775、session names、expected warning count and release file allowlist are exact throughout。
+- Assertion precision: RED 與 GREEN 使用完全相同的 13 項 assertions；AGENTS 限定首個正文段落及 `## 6` section、README 限定 Current Version／Deployment sections、index 限定第一個 header comment 與 Changelog marker 後第一個項目，runtime／品牌預期值使用 multiline 行錨定，避免歷史文字或錯誤區段造成假陽性。
+- Protected scope: Task 1、Task 2、Task 4 同時檢查 working-tree diff 與 `origin/master..HEAD` committed diff，防止 protected files 的既有提交差異漏檢。
 - Safety: no delete/move/rename/force/rollback operation exists；server and browser cleanup target only processes/sessions created by the plan。
 - Placeholder scan: no unfinished label、unnamed file、undefined function or cross-task shorthand remains；每個 Task 所需的命令與變數都在該 Task 內完整定義。`<current>` 是要寫入 AGENTS 的固定規則文字，不是待填值。
