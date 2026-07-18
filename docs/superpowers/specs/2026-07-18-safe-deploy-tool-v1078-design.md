@@ -90,12 +90,13 @@ pwsh -NoProfile -File scripts/test-deploy.ps1
 ### 實際部署
 
 ```powershell
+# Deploy v10.78
 .\deploy.ps1 -ExpectedHead <完整 40 字元 SHA>
 ```
 
 `-ExpectedHead` 必須與執行當下 local HEAD 完全相同，否則停止。這是實際 push 的明確確認，不接受縮寫、空值或自動猜測。
 
-舊 `-Message` 參數移除，因為腳本不再建立 commit。README 部署範例必須同步更新。
+舊 `-Message` 參數移除，因為腳本不再建立 commit。README 部署範例改以緊鄰命令的 `# Deploy v<current>` 註解保留目前版本契約；版本一致性 checker 與測試必須同步改為解析此註解和新的 `-ExpectedHead` 命令結構。
 
 ## 部署前流程
 
@@ -177,6 +178,8 @@ pwsh -NoProfile -File scripts/test-deploy.ps1
 
 - `deploy.ps1`：改寫並納入 Git。
 - `scripts/test-deploy.ps1`：新增 dependency-free 部署契約測試。
+- `scripts/check-version-consistency.js`：README deploy example 改驗證 `# Deploy v<current>` 與 `-ExpectedHead` 新 CLI 結構。
+- `scripts/check-version-consistency.test.js`：保留既有 fixture 版本語意並增加新 CLI 的接受／拒絕案例。
 - `.github/workflows/pages.yml`：在 artifact 前加入部署腳本測試。
 - `AGENTS.md`：基準版本、部署腳本狀態與六個未追蹤檔規則。
 - `README.md`：v10.78、日期、新 CLI 與工具已納管說明。
