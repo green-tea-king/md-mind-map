@@ -513,6 +513,37 @@ Test-Case 'installed Chrome discovery supports the current Windows or CI host' {
     "installed Chrome discovery returned an invalid path: $chromePath"
 }
 
+Test-Case 'marker creation failure preserves the unowned directory and reports cleanup evidence' {
+  $created = $null
+  $captured = $null
+  try {
+    try {
+      $created = New-OwnedChromeProfile -MarkerWriter {
+        param($markerPath, $token)
+        throw [IO.IOException]::new('marker fixture failure')
+      }
+      throw 'marker creation fixture unexpectedly succeeded'
+    } catch {
+      $captured = $_
+    }
+
+    if ($null -eq $created -and $null -ne $captured) {
+      $created = $captured.Exception.Data['Profile']
+    }
+    Assert-True ($null -ne $created) 'marker creation failure did not expose the created profile metadata'
+    Assert-True (Test-Path -LiteralPath $created.Path -PathType Container) `
+      'marker creation failure deleted a directory whose ownership marker was never created'
+    Assert-True (-not (Test-Path -LiteralPath $created.MarkerPath -PathType Leaf)) `
+      'marker creation failure fixture unexpectedly created an ownership marker'
+    Assert-True ([string]$captured.Exception.Data['CleanupEvidence'] -match 'preserved|marker') `
+      'marker creation failure omitted cleanup evidence'
+  } finally {
+    if ($null -ne $created -and (Test-Path -LiteralPath $created.Path)) {
+      Remove-Item -LiteralPath $created.Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 Test-Case 'owned Chrome profile lifecycle is unique exact and fail-closed' {
   $first = New-OwnedChromeProfile
   $second = New-OwnedChromeProfile

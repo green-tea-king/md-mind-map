@@ -195,6 +195,8 @@ function Get-InstalledChromePath {
 }
 
 function New-OwnedChromeProfile {
+  param([scriptblock]$MarkerWriter)
+
   $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd(
     [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
   )
@@ -204,10 +206,24 @@ function New-OwnedChromeProfile {
 
   [void][IO.Directory]::CreateDirectory($profilePath)
   $markerPath = Join-Path $profilePath '.mk2md-owned-profile'
+  if ($null -eq $MarkerWriter) {
+    $MarkerWriter = {
+      param($path, $value)
+      [IO.File]::WriteAllText($path, $value, [Text.UTF8Encoding]::new($false))
+    }
+  }
   try {
-    [IO.File]::WriteAllText($markerPath, $token, [Text.UTF8Encoding]::new($false))
+    & $MarkerWriter $markerPath $token
   } catch {
-    [IO.Directory]::Delete($profilePath, $true)
+    $profile = [pscustomobject]@{
+      Path = $profilePath
+      TempRoot = $tempRoot
+      Token = $token
+      MarkerPath = $markerPath
+    }
+    $_.Exception.Data['Profile'] = $profile
+    $_.Exception.Data['CleanupEvidence'] =
+      "Chrome profile directory preserved because ownership marker creation failed: $profilePath"
     throw
   }
   return [pscustomobject]@{
