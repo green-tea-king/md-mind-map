@@ -180,6 +180,17 @@ function New-OwnedChromeProfile {
   }
 }
 
+function Assert-PlainOwnedChromeProfileDirectory {
+  param(
+    [Parameter(Mandatory)][object]$ProfileItem,
+    [Parameter(Mandatory)][string]$ProfilePath
+  )
+  if (-not $ProfileItem.PSIsContainer -or
+      ($ProfileItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Refusing to remove a non-directory or reparse-point Chrome profile: $ProfilePath"
+  }
+}
+
 function Remove-OwnedChromeProfile {
   param([Parameter(Mandatory)][object]$Profile)
 
@@ -218,9 +229,7 @@ function Remove-OwnedChromeProfile {
     throw "Refusing to remove a redirected owned Chrome profile: $profilePath"
   }
   $profileItem = Get-Item -LiteralPath $profilePath -Force -ErrorAction Stop
-  if (-not $profileItem.PSIsContainer -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-    throw "Refusing to remove a non-directory or reparse-point Chrome profile: $profilePath"
-  }
+  Assert-PlainOwnedChromeProfileDirectory -ProfileItem $profileItem -ProfilePath $profilePath
   if (-not (Test-Path -LiteralPath $expectedMarker -PathType Leaf)) {
     throw "Owned Chrome profile marker is missing: $expectedMarker"
   }
@@ -239,6 +248,36 @@ function Remove-OwnedChromeProfile {
     Start-Sleep -Milliseconds 100
   }
   if (Test-Path -LiteralPath $profilePath) { throw "Owned Chrome profile was not removed: $profilePath" }
+}
+
+function New-ChromeObservationTimeoutException {
+  param([Parameter(Mandatory)][DateTime]$ObservationStartedAt)
+
+  $elapsedMilliseconds = [int64][Math]::Ceiling(
+    ([DateTime]::UtcNow - $ObservationStartedAt).TotalMilliseconds
+  )
+  $exception = [TimeoutException]::new(
+    "Chrome CDP observation did not reach a $($script:CdpQuietWindowMilliseconds)ms quiet window within $($script:CdpMaximumObservationMilliseconds)ms; observation elapsed ${elapsedMilliseconds}ms."
+  )
+  $exception.Data['ObservationElapsedMilliseconds'] = $elapsedMilliseconds
+  $exception.Data['ObservationMaximumMilliseconds'] = $script:CdpMaximumObservationMilliseconds
+  return $exception
+}
+
+function Throw-ChromeFailure {
+  param(
+    [Exception]$PrimaryException = $null,
+    [string[]]$CleanupFailures = @()
+  )
+
+  $failures = @($CleanupFailures | Where-Object { $_ })
+  if ($null -ne $PrimaryException) {
+    if ($failures.Count -gt 0) {
+      $PrimaryException.Data['CleanupFailures'] = $failures -join '; '
+    }
+    throw $PrimaryException
+  }
+  if ($failures.Count -gt 0) { throw "Chrome cleanup failed: $($failures -join '; ')" }
 }
 
 function Stop-OwnedProcess {
@@ -497,6 +536,8 @@ function Invoke-ChromeSelfTest {
   $ownedProfile = $null
   $chromeStarted = $false
   $browserResult = $null
+  $primaryException = $null
+  $cleanupFailures = [Collections.Generic.List[string]]::new()
   try {
     $ownedProfile = New-OwnedChromeProfile
     $userDataArgument = "--user-data-dir=$($ownedProfile.Path)"
@@ -620,16 +661,23 @@ JSON.stringify({
         ($observationDeadline - [DateTime]::UtcNow).TotalMilliseconds
       )
       if ($remainingMilliseconds -le 0) {
-        throw "Chrome CDP observation did not reach a $($script:CdpQuietWindowMilliseconds)ms quiet window within $($script:CdpMaximumObservationMilliseconds)ms."
+        throw (New-ChromeObservationTimeoutException -ObservationStartedAt $observationStartedAt)
       }
       Start-Sleep -Milliseconds ([Math]::Min(100, $remainingMilliseconds))
       if ([DateTime]::UtcNow -ge $observationDeadline) {
-        throw "Chrome CDP observation did not reach a $($script:CdpQuietWindowMilliseconds)ms quiet window within $($script:CdpMaximumObservationMilliseconds)ms."
+        throw (New-ChromeObservationTimeoutException -ObservationStartedAt $observationStartedAt)
       }
-      $evaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
-        expression = $expression
-        returnByValue = $true
-      } -EventSink $events -TimeoutSeconds 2 -DeadlineUtc $observationDeadline
+      try {
+        $evaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+          expression = $expression
+          returnByValue = $true
+        } -EventSink $events -TimeoutSeconds 2 -DeadlineUtc $observationDeadline
+      } catch {
+        if ([DateTime]::UtcNow -ge $observationDeadline) {
+          throw (New-ChromeObservationTimeoutException -ObservationStartedAt $observationStartedAt)
+        }
+        throw
+      }
       $value = $evaluation.result.result.value
       if (-not $value) { throw 'Chrome returned no DOM state during the CDP observation window.' }
       $dom = $value | ConvertFrom-Json
@@ -695,8 +743,9 @@ JSON.stringify({
       ChromeProfilePath = $ownedProfile.Path
       ChromeProfileUsed = $chromeProfileUsed
     }
+  } catch {
+    $primaryException = $_.Exception
   } finally {
-    $closeFailure = ''
     if ($socket.State -eq [Net.WebSockets.WebSocketState]::Open) {
       $closeCancellation = [Threading.CancellationTokenSource]::new(
         [TimeSpan]::FromSeconds($script:CdpCloseTimeoutSeconds)
@@ -708,28 +757,44 @@ JSON.stringify({
           $closeCancellation.Token
         ).GetAwaiter().GetResult()
       } catch [OperationCanceledException] {
-        $closeFailure = "Chrome CDP WebSocket close timed out after $($script:CdpCloseTimeoutSeconds) seconds."
-        $socket.Abort()
+        $cleanupFailures.Add(
+          "Chrome CDP WebSocket close timed out after $($script:CdpCloseTimeoutSeconds) seconds."
+        )
+        try { $socket.Abort() } catch {
+          $cleanupFailures.Add("Chrome CDP WebSocket abort failed: $($_.Exception.Message)")
+        }
       } catch {
-        $closeFailure = "Chrome CDP WebSocket close failed: $($_.Exception.Message)"
-        $socket.Abort()
+        $cleanupFailures.Add("Chrome CDP WebSocket close failed: $($_.Exception.Message)")
+        try { $socket.Abort() } catch {
+          $cleanupFailures.Add("Chrome CDP WebSocket abort failed: $($_.Exception.Message)")
+        }
       } finally {
-        $closeCancellation.Dispose()
+        try { $closeCancellation.Dispose() } catch {
+          $cleanupFailures.Add("Chrome CDP close cancellation disposal failed: $($_.Exception.Message)")
+        }
       }
     }
-    try {
-      $socket.Dispose()
-      $client.Dispose()
-      $handler.Dispose()
-    } finally {
-      try {
-        if ($chromeStarted) { Stop-OwnedProcess -Process $chrome -Label 'headless Chrome' }
-      } finally {
-        if ($null -ne $ownedProfile) { Remove-OwnedChromeProfile -Profile $ownedProfile }
+    try { $socket.Dispose() } catch {
+      $cleanupFailures.Add("Chrome CDP WebSocket disposal failed: $($_.Exception.Message)")
+    }
+    try { $client.Dispose() } catch {
+      $cleanupFailures.Add("Chrome HTTP client disposal failed: $($_.Exception.Message)")
+    }
+    try { $handler.Dispose() } catch {
+      $cleanupFailures.Add("Chrome HTTP handler disposal failed: $($_.Exception.Message)")
+    }
+    if ($chromeStarted) {
+      try { Stop-OwnedProcess -Process $chrome -Label 'headless Chrome' } catch {
+        $cleanupFailures.Add("Chrome process cleanup failed: $($_.Exception.Message)")
       }
     }
-    if ($closeFailure) { throw $closeFailure }
+    if ($null -ne $ownedProfile) {
+      try { Remove-OwnedChromeProfile -Profile $ownedProfile } catch {
+        $cleanupFailures.Add("Chrome profile cleanup failed: $($_.Exception.Message)")
+      }
+    }
   }
+  Throw-ChromeFailure -PrimaryException $primaryException -CleanupFailures @($cleanupFailures)
   return $browserResult
 }
 

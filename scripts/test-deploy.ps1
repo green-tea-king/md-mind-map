@@ -58,6 +58,9 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Get-InstalledChromePath',
     'New-OwnedChromeProfile',
     'Remove-OwnedChromeProfile',
+    'Assert-PlainOwnedChromeProfileDirectory',
+    'New-ChromeObservationTimeoutException',
+    'Throw-ChromeFailure',
     'Start-LocalSiteServer',
     'Stop-OwnedProcess',
     'Receive-CdpMessage',
@@ -449,10 +452,11 @@ Test-Case 'owned Chrome profile lifecycle is unique exact and fail-closed' {
         "owned Chrome profile escaped TEMP: $($profile.Path)"
     }
 
+    $wrongToken = if ($first.Token -ne ('0' * 32)) { '0' * 32 } else { '1' * 32 }
     $wrong = [pscustomobject]@{
       Path = $first.Path
       TempRoot = $first.TempRoot
-      Token = 'wrong-token'
+      Token = $wrongToken
       MarkerPath = $first.MarkerPath
     }
     $threw = $false
@@ -460,12 +464,64 @@ Test-Case 'owned Chrome profile lifecycle is unique exact and fail-closed' {
     Assert-True $threw 'owned Chrome cleanup accepted the wrong creation token'
     Assert-True (Test-Path -LiteralPath $first.Path -PathType Container) `
       'failed-closed Chrome cleanup removed the protected profile'
+
+    $escape = [pscustomobject]@{
+      Path = $repo
+      TempRoot = $first.TempRoot
+      Token = $first.Token
+      MarkerPath = Join-Path $repo '.mk2md-owned-profile'
+    }
+    $threw = $false
+    try { Remove-OwnedChromeProfile -Profile $escape } catch { $threw = $_.Exception.Message -match 'owned Chrome profile' }
+    Assert-True $threw 'owned Chrome cleanup accepted a path outside TEMP'
+    Assert-True (Test-Path -LiteralPath (Join-Path $repo 'index.html') -PathType Leaf) `
+      'path-escape guard modified the repository'
+
+    $replacementToken = if ($second.Token -ne ('f' * 32)) { 'f' * 32 } else { 'e' * 32 }
+    [IO.File]::WriteAllText($second.MarkerPath, $replacementToken, [Text.UTF8Encoding]::new($false))
+    $threw = $false
+    try { Remove-OwnedChromeProfile -Profile $second } catch { $threw = $_.Exception.Message -match 'marker' }
+    Assert-True $threw 'owned Chrome cleanup accepted a replaced marker'
+    Assert-True (Test-Path -LiteralPath $second.Path -PathType Container) `
+      'marker-replacement guard removed the protected profile'
+    [IO.File]::WriteAllText($second.MarkerPath, $second.Token, [Text.UTF8Encoding]::new($false))
   } finally {
     if (Test-Path -LiteralPath $first.Path) { Remove-OwnedChromeProfile -Profile $first }
     if (Test-Path -LiteralPath $second.Path) { Remove-OwnedChromeProfile -Profile $second }
   }
   Assert-True (-not (Test-Path -LiteralPath $first.Path)) 'first owned Chrome profile was not removed'
   Assert-True (-not (Test-Path -LiteralPath $second.Path)) 'second owned Chrome profile was not removed'
+}
+
+Test-Case 'owned Chrome profile guard rejects a top-level reparse point' {
+  $reparseFixture = [pscustomobject]@{
+    PSIsContainer = $true
+    Attributes = [IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint
+  }
+  $threw = $false
+  try {
+    Assert-PlainOwnedChromeProfileDirectory -ProfileItem $reparseFixture -ProfilePath 'fixture-reparse'
+  } catch {
+    $threw = $_.Exception.Message -match 'reparse'
+  }
+  Assert-True $threw 'owned Chrome profile guard accepted a top-level reparse point'
+}
+
+Test-Case 'primary browser timeout keeps evidence when cleanup also fails' {
+  $primary = [TimeoutException]::new('Chrome observation timed out with observation elapsed 5007ms.')
+  $primary.Data['ObservationElapsedMilliseconds'] = [int64]5007
+  $captured = $null
+  try {
+    Throw-ChromeFailure -PrimaryException $primary -CleanupFailures @('profile cleanup fixture failed')
+  } catch {
+    $captured = $_.Exception
+  }
+  Assert-True ($null -ne $captured) 'combined browser failure did not throw'
+  Assert-True ($captured.Message -match 'observation timed out') 'cleanup failure replaced the primary browser timeout'
+  Assert-True ([int64]$captured.Data['ObservationElapsedMilliseconds'] -eq 5007) `
+    'cleanup failure removed the primary observation elapsed evidence'
+  Assert-True ([string]$captured.Data['CleanupFailures'] -match 'profile cleanup fixture failed') `
+    'combined browser failure omitted cleanup failure evidence'
 }
 
 function Get-ChromeFamilyProcessIds {
@@ -560,12 +616,14 @@ Test-Case 'continuous real Chrome diagnostics stop at the hard maximum and clean
     -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
   $stopwatch = [Diagnostics.Stopwatch]::StartNew()
   $threw = $false
+  $failureObservationMilliseconds = $null
   try {
     [void](Invoke-ChromeSelfTest `
       -Url (New-RealChromeFixtureUrl "setInterval(() => { console.warn('mk2md-continuous-diagnostic'); }, 100);") `
       -ExpectedVersion '10.78' -ExpectedDate '2026-07-19')
   } catch {
     $threw = $_.Exception.Message -match '5000ms|total deadline'
+    $failureObservationMilliseconds = $_.Exception.Data['ObservationElapsedMilliseconds']
   } finally {
     $stopwatch.Stop()
   }
@@ -573,6 +631,10 @@ Test-Case 'continuous real Chrome diagnostics stop at the hard maximum and clean
   $profilesAfter = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
     -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
   Assert-True $threw 'continuous diagnostics did not fail at the observation hard maximum'
+  Assert-True ($null -ne $failureObservationMilliseconds -and `
+    [int64]$failureObservationMilliseconds -ge 5000 -and `
+    [int64]$failureObservationMilliseconds -le 5500) `
+    "continuous-diagnostic failure lacks bounded observation evidence: $failureObservationMilliseconds"
   Assert-True ($stopwatch.ElapsedMilliseconds -lt 30000) `
     "continuous-diagnostic Chrome lifecycle exceeded 30000ms: $($stopwatch.ElapsedMilliseconds)ms"
   Assert-True (@($chromeAfter | Where-Object { $_ -notin $chromeBefore }).Count -eq 0) `
