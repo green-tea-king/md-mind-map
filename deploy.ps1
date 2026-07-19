@@ -1058,11 +1058,10 @@ function Get-PrePushRepositoryState {
   return Get-RepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
 }
 
-function Assert-PrePushRepositoryState {
+function Assert-RepositoryWriteBoundaryState {
   param(
     [Parameter(Mandatory)][object]$Initial,
-    [Parameter(Mandatory)][object]$State,
-    [switch]$AfterPush
+    [Parameter(Mandatory)][object]$State
   )
 
   if ($State.Branch -ne $script:ExpectedBranch) {
@@ -1082,6 +1081,16 @@ function Assert-PrePushRepositoryState {
   if (-not [bool]$State.StagedClean) { throw 'Pre-push repository staged index is not clean.' }
   Assert-ExactUntrackedSet -Actual @($State.Untracked) -Expected $script:ProtectedUntracked
   Assert-ProtectedSnapshot -Before $Initial.ProtectedHashes -After $State.ProtectedHashes
+}
+
+function Assert-PrePushRepositoryState {
+  param(
+    [Parameter(Mandatory)][object]$Initial,
+    [Parameter(Mandatory)][object]$State,
+    [switch]$AfterPush
+  )
+
+  Assert-RepositoryWriteBoundaryState -Initial $Initial -State $State
 
   $expectedRemoteHead = if ($AfterPush) { [string]$Initial.Head } else { [string]$Initial.RemoteHead }
   foreach ($property in @('OriginHead', 'RemoteHead')) {
@@ -1102,8 +1111,38 @@ function Invoke-ExactHeadPush {
 
   $before = Get-PrePushRepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
   Assert-PrePushRepositoryState -Initial $Initial -State $before
-  [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @('push', 'origin', $script:ExpectedBranch) -Repo $Repo)
+  try {
+    [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+      -Arguments @('push', 'origin', $script:ExpectedBranch) -Repo $Repo)
+  } catch {
+    $pushException = $_.Exception
+    try {
+      $uncertainState = Get-PrePushRepositoryState -Repo $Repo -Native $Native `
+        -SnapshotProvider $SnapshotProvider
+      Assert-RepositoryWriteBoundaryState -Initial $Initial -State $uncertainState
+      $stateEvidence = "branch=$($uncertainState.Branch); HEAD=$($uncertainState.Head); " +
+        "localMaster=$($uncertainState.LocalMasterHead); originMaster=$($uncertainState.OriginHead); " +
+        "remote=$($uncertainState.RemoteHead); fetchUrl=$($uncertainState.FetchUrl); " +
+        "pushUrl=$($uncertainState.PushUrl); protectedHashes=$($uncertainState.ProtectedHashes.Count)"
+      if ([string]$uncertainState.RemoteHead -eq [string]$Initial.Head) {
+        if ([string]$uncertainState.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+          throw "origin/master '$($uncertainState.OriginHead)' is inconsistent with the verified remote HEAD."
+        }
+        $evidence = "push outcome uncertain but remote verified; $stateEvidence"
+      } elseif ([string]$uncertainState.RemoteHead -eq [string]$Initial.RemoteHead) {
+        if ([string]$uncertainState.OriginHead -ne [string]$Initial.RemoteHead) {
+          throw "origin/master '$($uncertainState.OriginHead)' changed while the remote was not updated."
+        }
+        $evidence = "push failed and remote was not updated; $stateEvidence"
+      } else {
+        throw "Remote HEAD '$($uncertainState.RemoteHead)' is neither the original remote nor the expected HEAD."
+      }
+    } catch {
+      $evidence = "push outcome uncertain; post-push verification failed: $($_.Exception.Message)"
+    }
+    $pushException.Data['PushOutcomeEvidence'] = $evidence
+    throw $pushException
+  }
   $after = Get-PrePushRepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
   Assert-PrePushRepositoryState -Initial $Initial -State $after -AfterPush
 }

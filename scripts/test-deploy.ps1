@@ -234,7 +234,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       'git:staged-diff' { $exitCode = [int]$settings.StagedDiffExit; ''; break }
       'git:status' { @($settings.Untracked | ForEach-Object { "?? $_" }) -join "`n"; break }
       'node:vm-script' { '{"version":"10.78","date":"2026-07-19"}'; break }
-      'pwsh:contract' { $exitCode = [int]$settings.ContractExit; 'Deployment contract tests passed: 60/60.'; break }
+      'pwsh:contract' { $exitCode = [int]$settings.ContractExit; 'Deployment contract tests passed: 62/62.'; break }
       'gh:auth' { $exitCode = [int]$settings.AuthExit; ''; break }
       'gh:permission' { [string]$settings.PushPermission; break }
       'git:ls-remote' { "$remoteHead`trefs/heads/master"; break }
@@ -785,7 +785,11 @@ function New-TestRepositoryState([object]$Context) {
   }
 }
 
-function New-PrePushFixture([Collections.IDictionary]$BeforeOverrides = @{}) {
+function New-PrePushFixture(
+  [Collections.IDictionary]$BeforeOverrides = @{},
+  [Collections.IDictionary]$AfterOverrides = @{},
+  [switch]$PushThrows
+) {
   $initial = New-TestRepositoryContext 'local-ahead'
   $before = @{
     Branch = 'master'; Head = $initial.Head; LocalMasterHead = $initial.Head
@@ -802,6 +806,7 @@ function New-PrePushFixture([Collections.IDictionary]$BeforeOverrides = @{}) {
     WorkingDiffExit = 0; StagedDiffExit = 0
     Untracked = @($script:ProtectedUntracked); ProtectedHash = 'same'
   }
+  foreach ($key in $AfterOverrides.Keys) { $after[$key] = $AfterOverrides[$key] }
   $calls = [Collections.Generic.List[string]]::new()
   $phase = @{ Value = 0 }
   $native = {
@@ -810,6 +815,7 @@ function New-PrePushFixture([Collections.IDictionary]$BeforeOverrides = @{}) {
     $joined = $arguments -join ' '
     if ($filePath -eq 'git' -and $joined -eq 'push origin master') {
       [void]$calls.Add('git:push')
+      if ($PushThrows) { throw [TimeoutException]::new('fixture push timeout after remote acceptance is uncertain') }
       return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' }
     }
     if ($filePath -eq 'git' -and $joined -eq 'branch --show-current') { $phase.Value++ }
@@ -897,6 +903,52 @@ Test-Case 'every pre-push repository race stops before git push' {
     Assert-True (-not ($fixture.Calls -contains 'git:push')) `
       "pre-push $($mutation.Name) drift reached git push: $($fixture.Calls -join '|')"
   }
+}
+
+Test-Case 'uncertain push failure immediately verifies an accepted remote without retrying' {
+  $fixture = New-PrePushFixture -AfterOverrides @{ OriginHead = 'b' * 40 } -PushThrows
+  $caught = $null
+  try {
+    Invoke-ExactHeadPush -Initial $fixture.Initial -Repo 'fixture' -Native $fixture.Native `
+      -SnapshotProvider $fixture.SnapshotProvider
+  } catch { $caught = $_.Exception }
+  Assert-True ($null -ne $caught) 'uncertain accepted push did not stop the deployment'
+  Assert-True ($caught.Message -eq 'fixture push timeout after remote acceptance is uncertain') `
+    "uncertain accepted push replaced the original exception: $($caught.Message)"
+  $evidence = [string]$caught.Data['PushOutcomeEvidence']
+  Assert-True ($evidence -match 'push outcome uncertain but remote verified') `
+    "accepted remote evidence was not attached to the original exception: $evidence"
+  Assert-True (@($fixture.Calls | Where-Object { $_ -eq 'git:push' }).Count -eq 1) `
+    "uncertain push was retried: $($fixture.Calls -join '|')"
+  $pushIndex = $fixture.Calls.IndexOf('git:push')
+  Assert-True ($fixture.Calls[$pushIndex + 1] -eq '2:git:branch' -and `
+    $fixture.Calls -contains '2:git:fetch-url' -and $fixture.Calls -contains '2:git:push-url' -and `
+    $fixture.Calls -contains '2:git:head' -and $fixture.Calls -contains '2:git:local-master' -and `
+    $fixture.Calls -contains '2:git:origin-master' -and $fixture.Calls -contains '2:git:ls-remote' -and `
+    $fixture.Calls -contains '2:snapshot') `
+    "uncertain push did not immediately perform the complete checked re-read: $($fixture.Calls -join '|')"
+}
+
+Test-Case 'failed push immediately verifies an unchanged remote and preserves the original failure' {
+  $fixture = New-PrePushFixture -AfterOverrides @{
+    OriginHead = 'b' * 40
+    RemoteHead = 'b' * 40
+  } -PushThrows
+  $caught = $null
+  try {
+    Invoke-ExactHeadPush -Initial $fixture.Initial -Repo 'fixture' -Native $fixture.Native `
+      -SnapshotProvider $fixture.SnapshotProvider
+  } catch { $caught = $_.Exception }
+  Assert-True ($null -ne $caught) 'failed unchanged push did not stop the deployment'
+  Assert-True ($caught.Message -eq 'fixture push timeout after remote acceptance is uncertain') `
+    "failed unchanged push replaced the original exception: $($caught.Message)"
+  $evidence = [string]$caught.Data['PushOutcomeEvidence']
+  Assert-True ($evidence -match 'remote was not updated') `
+    "unchanged remote evidence was not attached to the original exception: $evidence"
+  Assert-True (@($fixture.Calls | Where-Object { $_ -eq 'git:push' }).Count -eq 1) `
+    "failed push was retried: $($fixture.Calls -join '|')"
+  Assert-True ($fixture.Calls[$fixture.Calls.IndexOf('git:push') + 1] -eq '2:git:branch') `
+    "failed push was not immediately re-read: $($fixture.Calls -join '|')"
 }
 
 function New-TestDeploymentAdapters(
