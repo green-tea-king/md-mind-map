@@ -48,6 +48,7 @@ Test-Case 'dot-sourcing does not invoke deployment' {
   Assert-True ($dotSourceOutput.Count -eq 0) 'dot-sourcing invoked deployment'
   $requiredFunctions = @(
     'Invoke-CheckedNative',
+    'Invoke-RepositoryNative',
     'Assert-ExactUntrackedSet',
     'Get-ProtectedSnapshot',
     'Assert-ProtectedSnapshot',
@@ -60,6 +61,8 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Invoke-CdpCommand',
     'Invoke-ChromeSelfTest',
     'Assert-BrowserResult',
+    'Get-RemoteIdentity',
+    'Get-RepositoryContext',
     'Invoke-Mk2mdDeployment'
   )
   foreach ($name in $requiredFunctions) {
@@ -131,6 +134,198 @@ Test-Case 'repository identity rejects non-GitHub URLs and wrong slugs' {
   $threw = $false; try { Assert-RepositorySlug -Slug 'green-tea-king/another-repo' } catch { $threw = $true }
   Assert-True $threw 'wrong GitHub repository slug was accepted'
   Assert-RepositorySlug -Slug 'green-tea-king/md-mind-map'
+}
+
+function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}) {
+  $settings = @{
+    Branch = 'master'
+    FetchUrls = @('https://github.com/green-tea-king/md-mind-map.git')
+    PushUrls = @('https://github.com/green-tea-king/md-mind-map.git')
+    WorkingDiffExit = 0
+    StagedDiffExit = 0
+    Untracked = @($script:ProtectedUntracked)
+    AuthExit = 0
+    PushPermission = 'true'
+    Relation = 'local-ahead'
+    SnapshotDrift = $false
+  }
+  foreach ($key in $Scenario.Keys) { $settings[$key] = $Scenario[$key] }
+
+  $calls = [Collections.Generic.List[object]]::new()
+  $head = 'a' * 40
+  $remoteHead = if ($settings.Relation -eq 'equal') { $head } else { 'b' * 40 }
+  $native = {
+    param($filePath, $arguments, $repoPath, $allowedExitCodes, $timeoutSeconds)
+    $arguments = @($arguments)
+    $joined = $arguments -join ' '
+    $key = switch -Regex ("$filePath $joined") {
+      '^git branch --show-current$' { 'git:branch'; break }
+      '^git remote get-url --all origin$' { 'git:fetch-url'; break }
+      '^git remote get-url --push --all origin$' { 'git:push-url'; break }
+      '^git diff --quiet$' { 'git:working-diff'; break }
+      '^git diff --cached --quiet$' { 'git:staged-diff'; break }
+      '^git -c core\.quotepath=false status --porcelain=v1 -uall$' { 'git:status'; break }
+      '^node scripts/check-version-consistency\.test\.js$' { 'node:version-test'; break }
+      '^node scripts/check-version-consistency\.js$' { 'node:version-gate'; break }
+      '^node -e ' { 'node:vm-script'; break }
+      '^gh auth status$' { 'gh:auth'; break }
+      '^gh api repos/green-tea-king/md-mind-map --jq \.permissions\.push$' { 'gh:permission'; break }
+      '^git ls-remote origin refs/heads/master$' { 'git:ls-remote'; break }
+      '^git fetch --no-tags origin master$' { 'git:fetch'; break }
+      '^git rev-parse HEAD$' { 'git:head'; break }
+      '^git merge-base --is-ancestor ' { if ($arguments[2] -eq $remoteHead) { 'git:remote-ancestor' } else { 'git:local-ancestor' }; break }
+      '^git log --format=%H %s ' { 'git:log'; break }
+      '^git diff --name-only ' { 'git:changed-paths'; break }
+      default { throw "Unexpected production command: $filePath $joined" }
+    }
+    [void]$calls.Add([pscustomobject]@{
+      Key = $key
+      FilePath = $filePath
+      Arguments = $arguments
+      Repo = $repoPath
+      AllowedExitCodes = @($allowedExitCodes)
+      TimeoutSeconds = $timeoutSeconds
+    })
+
+    $exitCode = 0
+    $stdout = switch ($key) {
+      'git:branch' { [string]$settings.Branch; break }
+      'git:fetch-url' { @($settings.FetchUrls) -join "`n"; break }
+      'git:push-url' { @($settings.PushUrls) -join "`n"; break }
+      'git:working-diff' { $exitCode = [int]$settings.WorkingDiffExit; ''; break }
+      'git:staged-diff' { $exitCode = [int]$settings.StagedDiffExit; ''; break }
+      'git:status' { @($settings.Untracked | ForEach-Object { "?? $_" }) -join "`n"; break }
+      'node:vm-script' { '{"version":"10.78","date":"2026-07-19"}'; break }
+      'gh:auth' { $exitCode = [int]$settings.AuthExit; ''; break }
+      'gh:permission' { [string]$settings.PushPermission; break }
+      'git:ls-remote' { "$remoteHead`trefs/heads/master"; break }
+      'git:head' { $head; break }
+      'git:remote-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'local-ahead')) { 0 } else { 1 }; ''; break }
+      'git:local-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'remote-ahead')) { 0 } else { 1 }; ''; break }
+      'git:log' { "$head fixture commit"; break }
+      'git:changed-paths' { 'deploy.ps1'; break }
+      default { ''; break }
+    }
+    $result = [pscustomobject]@{ ExitCode = $exitCode; StdOut = $stdout; StdErr = if ($exitCode) { 'fixture failure' } else { '' } }
+    if ($exitCode -notin @($allowedExitCodes)) {
+      throw "Native command failed ($exitCode): $filePath $joined`n$($result.StdErr)"
+    }
+    return $result
+  }.GetNewClosure()
+
+  $snapshotState = @{ Count = 0 }
+  $snapshotProvider = {
+    param($repoPath, $protectedPaths)
+    $snapshotState.Count++
+    [void]$calls.Add([pscustomobject]@{
+      Key = "snapshot:$($snapshotState.Count)"
+      Repo = $repoPath
+      ProtectedPaths = @($protectedPaths)
+    })
+    $snapshot = [ordered]@{}
+    foreach ($path in $protectedPaths) { $snapshot[$path] = "hash:$path" }
+    if ($settings.SnapshotDrift -and $snapshotState.Count -gt 1) { $snapshot[$protectedPaths[0]] = 'changed' }
+    return $snapshot
+  }.GetNewClosure()
+
+  return [pscustomobject]@{
+    Calls = $calls
+    Native = $native
+    SnapshotProvider = $snapshotProvider
+    Head = $head
+    RemoteHead = $remoteHead
+  }
+}
+
+Test-Case 'production repository preflight executes the exact checked command sequence' {
+  $fixture = New-ProductionPreflightFixture
+  $context = Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider
+  Assert-True ($context.FetchUrl -eq 'https://github.com/green-tea-king/md-mind-map.git') 'exact fetch URL was not retained'
+  Assert-True ($context.PushUrl -eq 'https://github.com/green-tea-king/md-mind-map.git') 'exact push URL was not retained'
+  Assert-True ($context.OriginSlug -eq 'green-tea-king/md-mind-map') 'exact repository slug was not retained'
+  $expected = @(
+    'git:branch', 'git:fetch-url', 'git:push-url', 'git:working-diff', 'git:staged-diff', 'git:status',
+    'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'gh:auth', 'gh:permission',
+    'git:ls-remote', 'git:fetch', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
+    'git:log', 'git:changed-paths', 'snapshot:2'
+  )
+  $actual = @($fixture.Calls | ForEach-Object Key)
+  Assert-True (($actual -join '|') -eq ($expected -join '|')) "production command sequence differed: $($actual -join '|')"
+  foreach ($call in @($fixture.Calls | Where-Object { $_.PSObject.Properties.Name -contains 'FilePath' })) {
+    Assert-True ($call.Repo -eq 'fixture') "repository command did not use injected repo: $($call.Key)"
+    Assert-True ($call.TimeoutSeconds -gt 0) "repository command was unbounded: $($call.Key)"
+  }
+  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After ([ordered]@{
+    'BACKUP_MANIFEST.md' = 'hash:BACKUP_MANIFEST.md'
+    'MD心智圖_v10_00.html' = 'hash:MD心智圖_v10_00.html'
+    'agent.md' = 'hash:agent.md'
+    'clear-auto-draft.html' = 'hash:clear-auto-draft.html'
+    'design.md' = 'hash:design.md'
+    'repository-history.bundle' = 'hash:repository-history.bundle'
+  })
+}
+
+Test-Case 'production preflight rejects wrong or multiple push URLs before external probes' {
+  foreach ($scenario in @(
+    @{ PushUrls = @('https://github.com/green-tea-king/not-mk2md.git'); Message = 'green-tea-king/md-mind-map' },
+    @{ PushUrls = @('https://github.com/green-tea-king/md-mind-map.git', 'git@github.com:someone/else.git'); Message = 'exactly one push URL' }
+  )) {
+    $fixture = New-ProductionPreflightFixture $scenario
+    $threw = $false
+    try { Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider } catch {
+      $threw = $_.Exception.Message -match [regex]::Escape($scenario.Message)
+    }
+    Assert-True $threw "push URL scenario did not fail closed: $($scenario.PushUrls -join ', ')"
+    $keys = @($fixture.Calls | ForEach-Object Key)
+    Assert-True (@($keys | Where-Object { $_ -like 'node:*' -or $_ -like 'gh:*' -or $_ -eq 'git:fetch' -or $_ -like 'snapshot:*' }).Count -eq 0) `
+      "invalid push URL reached a later probe: $($keys -join '|')"
+  }
+}
+
+Test-Case 'production preflight rejects local repository gate failures' {
+  foreach ($case in @(
+    @{ Scenario = @{ Branch = 'feature' }; Message = 'branch must be master' },
+    @{ Scenario = @{ WorkingDiffExit = 1 }; Message = 'Tracked working-tree changes' },
+    @{ Scenario = @{ StagedDiffExit = 1 }; Message = 'Staged changes' },
+    @{ Scenario = @{ Untracked = @($script:ProtectedUntracked + 'unexpected.txt') }; Message = 'Unexpected untracked paths' }
+  )) {
+    $fixture = New-ProductionPreflightFixture $case.Scenario
+    $threw = $false
+    try { Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider } catch {
+      $threw = $_.Exception.Message -match [regex]::Escape($case.Message)
+    }
+    Assert-True $threw "local preflight fixture did not reject: $($case.Message)"
+  }
+}
+
+Test-Case 'production preflight rejects auth permission and unsafe remote relations' {
+  foreach ($case in @(
+    @{ Scenario = @{ AuthExit = 1 }; Message = 'Native command failed' },
+    @{ Scenario = @{ PushPermission = 'false' }; Message = 'push permission' },
+    @{ Scenario = @{ Relation = 'remote-ahead' }; Message = 'remote-ahead' },
+    @{ Scenario = @{ Relation = 'diverged' }; Message = 'diverged' }
+  )) {
+    $fixture = New-ProductionPreflightFixture $case.Scenario
+    $threw = $false
+    try { Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider } catch {
+      $threw = $_.Exception.Message -match [regex]::Escape($case.Message)
+    }
+    Assert-True $threw "external preflight fixture did not reject: $($case.Message)"
+  }
+}
+
+Test-Case 'production preflight compares the earliest protected snapshot after all probes' {
+  $fixture = New-ProductionPreflightFixture @{ SnapshotDrift = $true }
+  $threw = $false
+  try { [void](Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider) } catch {
+    $threw = $_.Exception.Message -match 'Protected file changed'
+  }
+  Assert-True $threw 'protected snapshot drift after production probes was accepted'
+  $keys = @($fixture.Calls | ForEach-Object Key)
+  Assert-True (($keys.IndexOf('snapshot:1') -gt $keys.IndexOf('git:status')) -and ($keys.IndexOf('snapshot:1') -lt $keys.IndexOf('node:version-test'))) `
+    "earliest snapshot was not between exact untracked and Node probes: $($keys -join '|')"
+  Assert-True ($keys.IndexOf('snapshot:2') -gt $keys.IndexOf('git:changed-paths')) `
+    "protected snapshot was not rechecked after all context probes: $($keys -join '|')"
 }
 
 Test-Case 'exact untracked paths are accepted' {

@@ -59,6 +59,23 @@ function Invoke-CheckedNative {
   return $result
 }
 
+function Invoke-RepositoryNative {
+  [CmdletBinding()]
+  param(
+    [scriptblock]$Native,
+    [Parameter(Mandatory)][string]$FilePath,
+    [string[]]$Arguments = @(),
+    [Parameter(Mandatory)][string]$Repo,
+    [int[]]$AllowedExitCodes = @(0),
+    [int]$TimeoutSeconds = 60
+  )
+  if ($null -eq $Native) {
+    return Invoke-CheckedNative -FilePath $FilePath -Arguments $Arguments `
+      -WorkingDirectory $Repo -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
+  }
+  return & $Native $FilePath $Arguments $Repo $AllowedExitCodes $TimeoutSeconds
+}
+
 function Assert-ExactUntrackedSet {
   param([string[]]$Actual, [string[]]$Expected)
   $actualSorted = @($Actual | ForEach-Object { $_.Replace('\','/') } | Sort-Object)
@@ -586,70 +603,138 @@ function Assert-RepositorySlug {
   }
 }
 
+function Get-RemoteIdentity {
+  [CmdletBinding()]
+  param(
+    [string]$Repo = $script:RepoRoot,
+    [scriptblock]$Native
+  )
+
+  $fetchUrls = @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('remote', 'get-url', '--all', 'origin') -Repo $Repo).StdOut -split "`r?`n" |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($fetchUrls.Count -ne 1) {
+    throw "origin must have exactly one fetch URL, got $($fetchUrls.Count)."
+  }
+
+  $pushUrls = @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('remote', 'get-url', '--push', '--all', 'origin') -Repo $Repo).StdOut -split "`r?`n" |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($pushUrls.Count -ne 1) {
+    throw "origin must have exactly one push URL, got $($pushUrls.Count)."
+  }
+
+  $fetchSlug = ConvertTo-RepositorySlug -RemoteUrl $fetchUrls[0]
+  $pushSlug = ConvertTo-RepositorySlug -RemoteUrl $pushUrls[0]
+  Assert-RepositorySlug -Slug $fetchSlug
+  Assert-RepositorySlug -Slug $pushSlug
+  if ($fetchSlug -ne $pushSlug) { throw "Fetch and push repository identities differ: $fetchSlug / $pushSlug." }
+
+  return [pscustomobject]@{
+    FetchUrl = $fetchUrls[0]
+    PushUrl = $pushUrls[0]
+    Slug = $fetchSlug
+  }
+}
+
 function Get-RepositoryContext {
   [CmdletBinding()]
-  param([string]$Repo = $script:RepoRoot)
+  param(
+    [string]$Repo = $script:RepoRoot,
+    [scriptblock]$Native,
+    [scriptblock]$SnapshotProvider
+  )
 
-  $branch = (Invoke-CheckedNative -FilePath 'git' -Arguments @('branch', '--show-current') -WorkingDirectory $Repo).StdOut.Trim()
+  if ($null -eq $SnapshotProvider) {
+    $SnapshotProvider = { param($repoPath, $protectedPaths) Get-ProtectedSnapshot -Repo $repoPath -Paths $protectedPaths }
+  }
+
+  $branch = (Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('branch', '--show-current') -Repo $Repo).StdOut.Trim()
   if ($branch -ne $script:ExpectedBranch) { throw "Deployment branch must be $($script:ExpectedBranch), got $branch." }
 
-  $originUrl = (Invoke-CheckedNative -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $Repo).StdOut.Trim()
-  $originSlug = ConvertTo-RepositorySlug -RemoteUrl $originUrl
-  Assert-RepositorySlug -Slug $originSlug
+  $remoteIdentity = Get-RemoteIdentity -Repo $Repo -Native $Native
 
-  $workingDiff = Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--quiet') -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)
+  $workingDiff = Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('diff', '--quiet') `
+    -Repo $Repo -AllowedExitCodes @(0, 1)
   if ($workingDiff.ExitCode -ne 0) { throw 'Tracked working-tree changes must be committed before deployment.' }
-  $stagedDiff = Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--cached', '--quiet') -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)
+  $stagedDiff = Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('diff', '--cached', '--quiet') `
+    -Repo $Repo -AllowedExitCodes @(0, 1)
   if ($stagedDiff.ExitCode -ne 0) { throw 'Staged changes must be committed before deployment.' }
 
-  $statusLines = @((Invoke-CheckedNative -FilePath 'git' -Arguments @('-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-uall') -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+  $statusLines = @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-uall') -Repo $Repo).StdOut `
+    -split "`r?`n" | Where-Object { $_ })
   $trackedStatus = @($statusLines | Where-Object { -not $_.StartsWith('?? ') })
   if ($trackedStatus.Count -gt 0) { throw "Tracked repository status is not clean: $($trackedStatus -join ', ')" }
   $untracked = @($statusLines | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
   Assert-ExactUntrackedSet -Actual $untracked -Expected $script:ProtectedUntracked
+  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
 
-  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('scripts/check-version-consistency.test.js') -WorkingDirectory $Repo)
-  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('scripts/check-version-consistency.js') -WorkingDirectory $Repo)
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
+    -Arguments @('scripts/check-version-consistency.test.js') -Repo $Repo)
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
+    -Arguments @('scripts/check-version-consistency.js') -Repo $Repo)
   $syntaxProbe = @'
 const fs=require('fs'),vm=require('vm');
 const html=fs.readFileSync('index.html','utf8');
 const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
 if(scripts.length!==1) throw new Error(`Expected 1 inline script, got ${scripts.length}`);
 new vm.Script(scripts[0][1]);
+const version=html.match(/const APP_VERSION = '([^']+)';/)?.[1];
+const date=html.match(/const APP_DATE = '(\d{4}-\d{2}-\d{2})';/)?.[1];
+if(!version) throw new Error('APP_VERSION was not found in index.html.');
+if(!date) throw new Error('APP_DATE was not found in index.html.');
+process.stdout.write(JSON.stringify({version,date}));
 '@
-  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('-e', $syntaxProbe) -WorkingDirectory $Repo)
+  $appIdentityJson = (Invoke-RepositoryNative -Native $Native -FilePath 'node' `
+    -Arguments @('-e', $syntaxProbe) -Repo $Repo).StdOut
+  try {
+    $appIdentity = $appIdentityJson | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "Node app identity probe returned invalid JSON: $appIdentityJson"
+  }
 
   $indexPath = Join-Path $Repo 'index.html'
-  $indexSource = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8
-  if ($indexSource -notmatch "const APP_VERSION = '(?<version>[^']+)';") { throw 'APP_VERSION was not found in index.html.' }
-  $version = $Matches.version
-  if ($indexSource -notmatch "const APP_DATE = '(?<date>\d{4}-\d{2}-\d{2})';") { throw 'APP_DATE was not found in index.html.' }
-  $date = $Matches.date
+  $version = [string]$appIdentity.version
+  $date = [string]$appIdentity.date
 
-  [void](Invoke-CheckedNative -FilePath 'gh' -Arguments @('auth', 'status') -WorkingDirectory $Repo)
-  $pushPermission = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('api', "repos/$($script:ExpectedRepoSlug)", '--jq', '.permissions.push') -WorkingDirectory $Repo).StdOut.Trim()
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'gh' -Arguments @('auth', 'status') -Repo $Repo)
+  $pushPermission = (Invoke-RepositoryNative -Native $Native -FilePath 'gh' `
+    -Arguments @('api', "repos/$($script:ExpectedRepoSlug)", '--jq', '.permissions.push') -Repo $Repo).StdOut.Trim()
   if ($pushPermission -ne 'true') { throw "GitHub push permission is not available for $($script:ExpectedRepoSlug)." }
 
-  $remoteLine = (Invoke-CheckedNative -FilePath 'git' -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -WorkingDirectory $Repo).StdOut.Trim()
+  $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
   if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable." }
   $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
-  [void](Invoke-CheckedNative -FilePath 'git' -Arguments @('fetch', '--no-tags', 'origin', $script:ExpectedBranch) -WorkingDirectory $Repo)
-  $head = (Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $Repo).StdOut.Trim().ToLowerInvariant()
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('fetch', '--no-tags', 'origin', $script:ExpectedBranch) -Repo $Repo)
+  $head = (Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
 
-  $remoteAncestor = (Invoke-CheckedNative -FilePath 'git' -Arguments @('merge-base', '--is-ancestor', $remoteHead, $head) -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
-  $localAncestor = (Invoke-CheckedNative -FilePath 'git' -Arguments @('merge-base', '--is-ancestor', $head, $remoteHead) -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
+  $remoteAncestor = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('merge-base', '--is-ancestor', $remoteHead, $head) -Repo $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
+  $localAncestor = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('merge-base', '--is-ancestor', $head, $remoteHead) -Repo $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
   $relation = Resolve-RemoteRelation -LocalHead $head -RemoteHead $remoteHead -RemoteIsAncestor $remoteAncestor -LocalIsAncestor $localAncestor
+  if ($relation -in @('remote-ahead', 'diverged')) {
+    throw "Deployment stopped because origin/$($script:ExpectedBranch) is $relation."
+  }
   $commits = if ($relation -eq 'local-ahead') {
-    @((Invoke-CheckedNative -FilePath 'git' -Arguments @('log', '--format=%H %s', "$remoteHead..$head") -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+    @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+      -Arguments @('log', '--format=%H %s', "$remoteHead..$head") -Repo $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
   } else { @() }
   $changedPaths = if ($relation -eq 'local-ahead') {
-    @((Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--name-only', "$remoteHead..$head") -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+    @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+      -Arguments @('diff', '--name-only', "$remoteHead..$head") -Repo $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
   } else { @() }
-  $protectedHashes = Get-ProtectedSnapshot -Repo $Repo -Paths $script:ProtectedUntracked
+  $afterProbeHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
+  Assert-ProtectedSnapshot -Before $protectedHashes -After $afterProbeHashes
 
   return [pscustomobject]@{
     Branch = $branch
-    OriginSlug = $originSlug
+    OriginSlug = $remoteIdentity.Slug
+    FetchUrl = $remoteIdentity.FetchUrl
+    PushUrl = $remoteIdentity.PushUrl
     Head = $head
     RemoteHead = $remoteHead
     Relation = $relation
