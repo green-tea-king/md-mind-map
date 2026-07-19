@@ -117,6 +117,15 @@ Test-Case 'native timeout cleanup is bounded when child output streams never clo
     "native timeout cleanup exceeded its bounded budget: $($stopwatch.ElapsedMilliseconds)ms"
 }
 
+Test-Case 'native stream timeout cleanup receives both output tasks' {
+  $streamCatch = [regex]::Match($source, '(?s)catch \[TimeoutException\] \{\s*\$primary = \$_.Exception\s*(?<body>.*?)\s*throw \$primary')
+  Assert-True $streamCatch.Success 'native stream-timeout catch branch is missing'
+  Assert-True ($streamCatch.Groups['body'].Value -match 'Mk2mdStdOutTask') `
+    'stream-timeout cleanup does not attach stdout task to the owned process'
+  Assert-True ($streamCatch.Groups['body'].Value -match 'Mk2mdStdErrTask') `
+    'stream-timeout cleanup does not attach stderr task to the owned process'
+}
+
 Test-Case 'CDP command total deadline bounds an event flood' {
   $events = [Collections.ArrayList]::new()
   $stopwatch = [Diagnostics.Stopwatch]::StartNew()

@@ -56,6 +56,8 @@ function Invoke-CheckedNative {
   [void]$process.Start()
   $stdoutTask = $process.StandardOutput.ReadToEndAsync()
   $stderrTask = $process.StandardError.ReadToEndAsync()
+  $process | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $stdoutTask -Force
+  $process | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $stderrTask -Force
   $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
   $timedOut = $false
   try {
@@ -67,8 +69,6 @@ function Invoke-CheckedNative {
   } catch [TimeoutException] { $timedOut = $true }
   if ($timedOut) {
     $primary = [TimeoutException]::new("Native command timed out after $TimeoutSeconds seconds: $FilePath $($Arguments -join ' ')")
-    $process | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $stdoutTask -Force
-    $process | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $stderrTask -Force
     try { Stop-OwnedProcess -Process $process -Label "native command $FilePath" -DeadlineUtc $deadline } catch {
       $primary.Data['CleanupFailures'] = $_.Exception.Message
     }
@@ -85,6 +85,8 @@ function Invoke-CheckedNative {
     $stderr = $stderrTask.GetAwaiter().GetResult()
   } catch [TimeoutException] {
     $primary = $_.Exception
+    $process | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $stdoutTask -Force
+    $process | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $stderrTask -Force
     try { Stop-OwnedProcess -Process $process -Label "native command $FilePath" -DeadlineUtc $deadline } catch {
       $primary.Data['CleanupFailures'] = $_.Exception.Message
     }
