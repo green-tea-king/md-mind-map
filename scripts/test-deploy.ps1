@@ -55,6 +55,7 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Resolve-RemoteRelation',
     'Assert-ExpectedHead',
     'Get-FreeLoopbackPort',
+    'Get-InstalledChromePath',
     'Start-LocalSiteServer',
     'Stop-OwnedProcess',
     'Receive-CdpMessage',
@@ -110,6 +111,22 @@ Test-Case 'CDP command total deadline bounds an event flood' {
   Assert-True $threw 'event flood did not hit the CDP command total deadline'
   Assert-True ($events.Count -gt 0) 'event flood was not simulated'
   Assert-True ($stopwatch.ElapsedMilliseconds -lt 1000) 'event flood timeout was not bounded'
+}
+
+Test-Case 'CDP command rejects a matching response returned after its total deadline' {
+  $threw = $false
+  try {
+    Wait-CdpCommandResponse -Id 42 -Method 'Runtime.evaluate' `
+      -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(80)) `
+      -ReceiveMessage {
+        param([int]$RemainingMilliseconds)
+        Start-Sleep -Milliseconds 150
+        [pscustomobject]@{ id = 42; result = @{} }
+      }
+  } catch {
+    $threw = $_.Exception.Message -match 'total deadline'
+  }
+  Assert-True $threw 'late matching CDP response was accepted'
 }
 
 Test-Case 'remote relation matrix is stable' {
@@ -407,9 +424,69 @@ $goodBrowser = [pscustomobject]@{
   Passed = 11; Failed = 0; ConsoleErrors = @(); PageErrors = @(); Warnings = @(1,2,3,4,5,6)
 }
 
-Test-Case 'browser result accepts the current clean baseline after bounded settle' {
-  Assert-True ($source.Contains('$script:CdpSettleMilliseconds = 1000')) 'bounded CDP settle contract is missing'
-  Assert-True ($source.Contains('$settleDeadline')) 'CDP event settle loop is missing'
+Test-Case 'installed Chrome discovery supports the current Windows or CI host' {
+  Assert-True ([bool](Get-Command Get-InstalledChromePath -ErrorAction SilentlyContinue)) `
+    'Get-InstalledChromePath is undefined'
+  $chromePath = Get-InstalledChromePath
+  Assert-True (Test-Path -LiteralPath $chromePath -PathType Leaf) `
+    "installed Chrome discovery returned an invalid path: $chromePath"
+}
+
+function Invoke-RealChromeFixture([string]$BodyScript) {
+  $tempRoot = [IO.Path]::GetTempPath()
+  $chromeBefore = @(Get-Process chrome -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+  $profilesBefore = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
+    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+  $html = @"
+<!doctype html><meta charset="utf-8"><title>MK2MD v10.78</title>
+<div id="brandName">MK2MD</div><div id="appVersion">v10.78 · 2026-07-19</div>
+<script>
+document.documentElement.dataset.ciSelfTest='pass';
+document.documentElement.dataset.ciSelfTestPassed='11';
+document.documentElement.dataset.ciSelfTestFailed='0';
+$BodyScript
+</script>
+"@
+  $url = [uri]('data:text/html;charset=utf-8,' + [uri]::EscapeDataString($html))
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  $result = Invoke-ChromeSelfTest -Url $url -ExpectedVersion '10.78' -ExpectedDate '2026-07-19'
+  $stopwatch.Stop()
+
+  $chromeAfter = @(Get-Process chrome -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+  $profilesAfter = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
+    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+  $newChrome = @($chromeAfter | Where-Object { $_ -notin $chromeBefore })
+  $newProfiles = @($profilesAfter | Where-Object { $_ -notin $profilesBefore })
+  Assert-True ($newChrome.Count -eq 0) "real Chrome fixture leaked owned processes: $($newChrome -join ', ')"
+  Assert-True ($newProfiles.Count -eq 0) "real Chrome fixture leaked owned profiles: $($newProfiles -join ', ')"
+
+  return [pscustomobject]@{ Result = $result; ElapsedMilliseconds = $stopwatch.ElapsedMilliseconds }
+}
+
+Test-Case 'real Chrome captures a page error delayed by 1500 milliseconds' {
+  $fixture = Invoke-RealChromeFixture "setTimeout(() => { throw new Error('mk2md-delayed-page-error'); }, 1500);"
+  Assert-True (@($fixture.Result.PageErrors | Where-Object { $_ -match 'mk2md-delayed-page-error' }).Count -gt 0) `
+    "delayed page error was missed: $(@($fixture.Result.PageErrors) -join ' | ')"
+  Assert-True ($fixture.ElapsedMilliseconds -lt 5000) `
+    "delayed Chrome fixture exceeded the 5000ms hard maximum: $($fixture.ElapsedMilliseconds)ms"
+}
+
+Test-Case 'clean real Chrome fixture stays error-free within the hard maximum' {
+  $fixture = Invoke-RealChromeFixture ''
+  Assert-True ($fixture.ElapsedMilliseconds -lt 5000) `
+    "clean Chrome fixture exceeded the 5000ms hard maximum: $($fixture.ElapsedMilliseconds)ms"
+  Assert-True (@($fixture.Result.ConsoleErrors).Count -eq 0) 'clean Chrome fixture reported console errors'
+  Assert-True (@($fixture.Result.PageErrors).Count -eq 0) 'clean Chrome fixture reported page errors'
+}
+
+Test-Case 'browser result accepts the current clean baseline after bounded observation' {
+  Assert-True ($source.Contains('$script:CdpMinimumObservationMilliseconds = 2000')) 'CDP minimum observation contract is missing'
+  Assert-True ($source.Contains('$script:CdpQuietWindowMilliseconds = 500')) 'CDP quiet-window contract is missing'
+  Assert-True ($source.Contains('$script:CdpMaximumObservationMilliseconds = 5000')) 'CDP hard maximum contract is missing'
+  Assert-True (-not $source.Contains('$script:CdpSettleMilliseconds')) 'legacy CDP settle contract remains'
+  Assert-True ($source.Contains('$observationDeadline')) 'CDP bounded observation loop is missing'
+  Assert-True ($source.Contains('$lastDiagnosticEventAt')) 'CDP quiet-window tracking is missing'
+  Assert-True ($source.Contains('-DeadlineUtc $observationDeadline')) 'CDP observation commands are not pinned to the hard maximum'
   Assert-BrowserResult -Result $goodBrowser -Version '10.77' -Date '2026-07-17'
 }
 

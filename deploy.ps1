@@ -13,7 +13,9 @@ $script:ExpectedBranch = 'master'
 $script:LiveUrl = 'https://green-tea-king.github.io/md-mind-map/'
 $script:CdpConnectTimeoutSeconds = 10
 $script:CdpCloseTimeoutSeconds = 2
-$script:CdpSettleMilliseconds = 1000
+$script:CdpMinimumObservationMilliseconds = 2000
+$script:CdpQuietWindowMilliseconds = 500
+$script:CdpMaximumObservationMilliseconds = 5000
 $script:ProtectedUntracked = @(
   'BACKUP_MANIFEST.md',
   'MD心智圖_v10_00.html',
@@ -131,6 +133,27 @@ function Get-FreeLoopbackPort {
   } finally {
     $listener.Stop()
   }
+}
+
+function Get-InstalledChromePath {
+  $candidates = [Collections.Generic.List[string]]::new()
+  foreach ($candidate in @(
+    @{ Root = $env:ProgramFiles; Relative = 'Google\Chrome\Application\chrome.exe' },
+    @{ Root = ${env:ProgramFiles(x86)}; Relative = 'Google\Chrome\Application\chrome.exe' },
+    @{ Root = $env:LOCALAPPDATA; Relative = 'Google\Chrome\Application\chrome.exe' }
+  )) {
+    if ($candidate.Root) { $candidates.Add((Join-Path $candidate.Root $candidate.Relative)) }
+  }
+  foreach ($commandName in @('google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome', 'chrome.exe')) {
+    $command = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $command) { $candidates.Add($command.Source) }
+  }
+
+  $chromePath = $candidates | Select-Object -Unique | Where-Object {
+    Test-Path -LiteralPath $_ -PathType Leaf
+  } | Select-Object -First 1
+  if (-not $chromePath) { throw 'Installed Google Chrome or Chromium was not found.' }
+  return $chromePath
 }
 
 function Stop-OwnedProcess {
@@ -288,6 +311,9 @@ function Wait-CdpCommandResponse {
       }
       throw
     }
+    if ([DateTime]::UtcNow -ge $DeadlineUtc) {
+      throw "CDP command exceeded its total deadline: $Method"
+    }
     if ($incoming.PSObject.Properties.Name -contains 'method') {
       if ($null -ne $EventSink) { [void]$EventSink.Add($incoming) }
       continue
@@ -307,11 +333,13 @@ function Invoke-CdpCommand {
     [Parameter(Mandatory)][string]$Method,
     [object]$Params = $null,
     [Collections.IList]$EventSink = $null,
-    [int]$TimeoutSeconds = 10
+    [int]$TimeoutSeconds = 10,
+    [DateTime]$DeadlineUtc = [DateTime]::MaxValue
   )
 
   if ($TimeoutSeconds -le 0) { throw 'CDP command timeout must be positive.' }
-  $deadlineUtc = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  $commandDeadlineUtc = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  if ($DeadlineUtc -lt $commandDeadlineUtc) { $commandDeadlineUtc = $DeadlineUtc }
   if ($null -eq (Get-Variable CdpNextId -Scope Script -ErrorAction SilentlyContinue)) {
     $script:CdpNextId = 0
   }
@@ -320,7 +348,7 @@ function Invoke-CdpCommand {
   $message = [ordered]@{ id = $id; method = $Method }
   if ($null -ne $Params) { $message.params = $Params }
   $bytes = [Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 30))
-  $sendRemainingMilliseconds = [int][Math]::Ceiling(($deadlineUtc - [DateTime]::UtcNow).TotalMilliseconds)
+  $sendRemainingMilliseconds = [int][Math]::Ceiling(($commandDeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds)
   if ($sendRemainingMilliseconds -le 0) { throw "CDP command exceeded its total deadline: $Method" }
   $cancellation = [Threading.CancellationTokenSource]::new(
     [TimeSpan]::FromMilliseconds($sendRemainingMilliseconds)
@@ -343,7 +371,7 @@ function Invoke-CdpCommand {
     param([int]$RemainingMilliseconds)
     Receive-CdpMessage -WebSocket $WebSocket -TimeoutMilliseconds $RemainingMilliseconds
   }
-  return Wait-CdpCommandResponse -Id $id -Method $Method -DeadlineUtc $deadlineUtc `
+  return Wait-CdpCommandResponse -Id $id -Method $Method -DeadlineUtc $commandDeadlineUtc `
     -EventSink $EventSink -ReceiveMessage $receiveMessage
 }
 
@@ -354,13 +382,7 @@ function Invoke-ChromeSelfTest {
     [Parameter(Mandatory)][string]$ExpectedDate
   )
 
-  $chromeCandidates = @(
-    (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
-    (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
-  )
-  $chromePath = $chromeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-  if (-not $chromePath) { throw 'Installed Google Chrome was not found.' }
+  $chromePath = Get-InstalledChromePath
 
   $debugPort = Get-FreeLoopbackPort
   $psi = [Diagnostics.ProcessStartInfo]::new()
@@ -480,17 +502,55 @@ JSON.stringify({
       throw "Chrome self-test did not finish within 90 seconds for MK2MD v$ExpectedVersion ($ExpectedDate)."
     }
 
-    $settleDeadline = [DateTime]::UtcNow.AddMilliseconds($script:CdpSettleMilliseconds)
-    do {
-      Start-Sleep -Milliseconds 100
+    $observationStartedAt = [DateTime]::UtcNow
+    $minimumObservationDeadline = $observationStartedAt.AddMilliseconds(
+      $script:CdpMinimumObservationMilliseconds
+    )
+    $observationDeadline = $observationStartedAt.AddMilliseconds(
+      $script:CdpMaximumObservationMilliseconds
+    )
+    $lastDiagnosticEventAt = $observationStartedAt
+    $diagnosticEventCount = @($events | Where-Object {
+      ($_.method -eq 'Runtime.consoleAPICalled' -and $_.params.type -in @('error', 'warning')) -or
+      ($_.method -eq 'Log.entryAdded' -and $_.params.entry.level -in @('error', 'warning')) -or
+      $_.method -eq 'Runtime.exceptionThrown'
+    }).Count
+
+    while ($true) {
+      $remainingMilliseconds = [int][Math]::Floor(
+        ($observationDeadline - [DateTime]::UtcNow).TotalMilliseconds
+      )
+      if ($remainingMilliseconds -le 0) {
+        throw "Chrome CDP observation did not reach a $($script:CdpQuietWindowMilliseconds)ms quiet window within $($script:CdpMaximumObservationMilliseconds)ms."
+      }
+      Start-Sleep -Milliseconds ([Math]::Min(100, $remainingMilliseconds))
+      if ([DateTime]::UtcNow -ge $observationDeadline) {
+        throw "Chrome CDP observation did not reach a $($script:CdpQuietWindowMilliseconds)ms quiet window within $($script:CdpMaximumObservationMilliseconds)ms."
+      }
       $evaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
         expression = $expression
         returnByValue = $true
-      } -EventSink $events -TimeoutSeconds 2
+      } -EventSink $events -TimeoutSeconds 2 -DeadlineUtc $observationDeadline
       $value = $evaluation.result.result.value
-      if (-not $value) { throw 'Chrome returned no DOM state during the CDP settle window.' }
+      if (-not $value) { throw 'Chrome returned no DOM state during the CDP observation window.' }
       $dom = $value | ConvertFrom-Json
-    } while ([DateTime]::UtcNow -lt $settleDeadline)
+
+      $newDiagnosticEventCount = @($events | Where-Object {
+        ($_.method -eq 'Runtime.consoleAPICalled' -and $_.params.type -in @('error', 'warning')) -or
+        ($_.method -eq 'Log.entryAdded' -and $_.params.entry.level -in @('error', 'warning')) -or
+        $_.method -eq 'Runtime.exceptionThrown'
+      }).Count
+      if ($newDiagnosticEventCount -gt $diagnosticEventCount) {
+        $lastDiagnosticEventAt = [DateTime]::UtcNow
+        $diagnosticEventCount = $newDiagnosticEventCount
+      }
+
+      $now = [DateTime]::UtcNow
+      $minimumObserved = $now -ge $minimumObservationDeadline
+      $quietObserved = ($now - $lastDiagnosticEventAt).TotalMilliseconds -ge `
+        $script:CdpQuietWindowMilliseconds
+      if ($minimumObserved -and $quietObserved) { break }
+    }
 
     $consoleErrors = [Collections.Generic.List[string]]::new()
     $pageErrors = [Collections.Generic.List[string]]::new()
