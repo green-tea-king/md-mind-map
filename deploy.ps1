@@ -57,8 +57,8 @@ function Invoke-CheckedNative {
 
 function Assert-ExactUntrackedSet {
   param([string[]]$Actual, [string[]]$Expected)
-  $actualSorted = @($Actual | ForEach-Object { $_.Replace('\\','/') } | Sort-Object)
-  $expectedSorted = @($Expected | ForEach-Object { $_.Replace('\\','/') } | Sort-Object)
+  $actualSorted = @($Actual | ForEach-Object { $_.Replace('\','/') } | Sort-Object)
+  $expectedSorted = @($Expected | ForEach-Object { $_.Replace('\','/') } | Sort-Object)
   $difference = @(Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actualSorted)
   if ($difference.Count -gt 0) {
     throw "Unexpected untracked paths: $($difference | ForEach-Object { $_.InputObject + $_.SideIndicator } | Join-String -Separator ', ')"
@@ -95,8 +95,8 @@ function Resolve-RemoteRelation {
 }
 
 function Assert-ExpectedHead {
-  param([string]$Actual, [string]$Expected, [bool]$IsDryRun)
-  if ($IsDryRun) { return }
+  param([string]$Actual, [string]$Expected, [Alias('IsDryRun')][bool]$DryRun)
+  if ($DryRun) { return }
   if ($Expected -notmatch '^[0-9a-fA-F]{40}$' -or $Actual -ne $Expected.ToLowerInvariant()) {
     throw "ExpectedHead must equal local HEAD: $Actual"
   }

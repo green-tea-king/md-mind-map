@@ -52,10 +52,19 @@ Test-Case 'dot-sourcing does not invoke deployment' {
   }
 }
 
-Test-Case 'checked native failure throws' {
-  $threw = $false
-  try { Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', '--verify', 'refs/heads/__mk2md_missing__') } catch { $threw = $true }
-  Assert-True $threw 'native non-zero did not throw'
+Test-Case 'checked native failure and timeout throw' {
+  $nonZeroThrew = $false
+  try { Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', '--verify', 'refs/heads/__mk2md_missing__') } catch { $nonZeroThrew = $true }
+  Assert-True $nonZeroThrew 'native non-zero did not throw'
+
+  $timeoutThrew = $false
+  $pwshPath = (Get-Command pwsh -ErrorAction Stop).Source
+  try {
+    Invoke-CheckedNative -FilePath $pwshPath -Arguments @('-NoProfile', '-Command', 'Start-Sleep -Seconds 5') -TimeoutSeconds 1
+  } catch {
+    $timeoutThrew = $_.Exception.Message -match 'timed out after 1 seconds'
+  }
+  Assert-True $timeoutThrew 'native timeout did not throw the timeout contract'
 }
 
 Test-Case 'remote relation matrix is stable' {
@@ -66,7 +75,7 @@ Test-Case 'remote relation matrix is stable' {
 }
 
 Test-Case 'exact untracked paths are accepted' {
-  Assert-ExactUntrackedSet -Actual @('a', 'b') -Expected @('b', 'a')
+  Assert-ExactUntrackedSet -Actual @('dir\file') -Expected @('dir/file')
 }
 
 Test-Case 'unexpected untracked paths throw' {
@@ -91,12 +100,12 @@ Test-Case 'protected snapshot drift throws' {
 
 Test-Case 'expected-head mismatch throws outside dry run' {
   $threw = $false
-  try { Assert-ExpectedHead -Actual ('a' * 40) -Expected ('b' * 40) -IsDryRun $false } catch { $threw = $true }
+  try { Assert-ExpectedHead -Actual ('a' * 40) -Expected ('b' * 40) -DryRun $false } catch { $threw = $true }
   Assert-True $threw 'expected-head mismatch did not throw'
 }
 
 Test-Case 'dry run bypasses expected-head mismatch' {
-  Assert-ExpectedHead -Actual ('a' * 40) -Expected ('b' * 40) -IsDryRun $true
+  Assert-ExpectedHead -Actual ('a' * 40) -Expected ('b' * 40) -DryRun $true
 }
 
 if ($script:failed -gt 0) {
