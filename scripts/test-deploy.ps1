@@ -108,6 +108,51 @@ Test-Case 'dry run bypasses expected-head mismatch' {
   Assert-ExpectedHead -Actual ('a' * 40) -Expected ('b' * 40) -DryRun $true
 }
 
+$goodBrowser = [pscustomobject]@{
+  Title = 'MK2MD v10.77'; Brand = 'MK2MD'; VersionText = 'v10.77 · 2026-07-17'
+  Passed = 11; Failed = 0; ConsoleErrors = @(); PageErrors = @(); Warnings = @(1,2,3,4,5,6)
+}
+
+Test-Case 'browser result accepts the current clean baseline' {
+  Assert-BrowserResult -Result $goodBrowser -Version '10.77' -Date '2026-07-17'
+}
+
+Test-Case 'browser result rejects a console error' {
+  Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
+  $bad = $goodBrowser.PSObject.Copy(); $bad.ConsoleErrors = @('boom')
+  $threw = $false; try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch { $threw = $true }
+  Assert-True $threw 'console error was accepted'
+}
+
+Test-Case 'browser result rejects a page error' {
+  Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
+  $bad = $goodBrowser.PSObject.Copy(); $bad.PageErrors = @('page boom')
+  $threw = $false; try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch { $threw = $true }
+  Assert-True $threw 'page error was accepted'
+}
+
+Test-Case 'browser result rejects an incomplete self-test' {
+  Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
+  $bad = $goodBrowser.PSObject.Copy(); $bad.Passed = 10; $bad.Failed = 1
+  $threw = $false; try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch { $threw = $true }
+  Assert-True $threw 'incomplete self-test was accepted'
+}
+
+Test-Case 'browser result rejects warning count above baseline' {
+  Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
+  $bad = $goodBrowser.PSObject.Copy(); $bad.Warnings = @(1,2,3,4,5,6,7)
+  $threw = $false; try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch { $threw = $true }
+  Assert-True $threw 'warning count above baseline was accepted'
+}
+
+Test-Case 'browser result rejects wrong title version and date' {
+  Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
+  $bad = $goodBrowser.PSObject.Copy()
+  $bad.Title = 'MK2MD v10.76'; $bad.Brand = 'Wrong'; $bad.VersionText = 'v10.76 · 2026-07-16'
+  $threw = $false; try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch { $threw = $true }
+  Assert-True $threw 'wrong browser identity was accepted'
+}
+
 if ($script:failed -gt 0) {
   throw "Deployment contract tests failed: $script:failed failed, $script:passed passed."
 }
