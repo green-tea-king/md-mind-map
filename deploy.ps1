@@ -573,7 +573,17 @@ function ConvertTo-RepositorySlug {
   if ($value -match '^git@github\.com:(?<slug>[^/]+/[^/]+?)(?:\.git)?$') {
     return $Matches.slug
   }
+  if ($value -match '^ssh://git@github\.com/(?<slug>[^/]+/[^/]+?)(?:\.git)?$') {
+    return $Matches.slug
+  }
   throw "Unsupported origin URL: $value"
+}
+
+function Assert-RepositorySlug {
+  param([Parameter(Mandatory)][string]$Slug)
+  if ($Slug -ne $script:ExpectedRepoSlug) {
+    throw "Deployment origin must be $($script:ExpectedRepoSlug), got $Slug."
+  }
 }
 
 function Get-RepositoryContext {
@@ -585,7 +595,7 @@ function Get-RepositoryContext {
 
   $originUrl = (Invoke-CheckedNative -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $Repo).StdOut.Trim()
   $originSlug = ConvertTo-RepositorySlug -RemoteUrl $originUrl
-  if ($originSlug -ne $script:ExpectedRepoSlug) { throw "Deployment origin must be $($script:ExpectedRepoSlug), got $originSlug." }
+  Assert-RepositorySlug -Slug $originSlug
 
   $workingDiff = Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--quiet') -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)
   if ($workingDiff.ExitCode -ne 0) { throw 'Tracked working-tree changes must be committed before deployment.' }
@@ -656,9 +666,33 @@ new vm.Script(scripts[0][1]);
 function Select-ExactHeadRun {
   param([object[]]$Runs, [Parameter(Mandatory)][string]$Head)
 
-  return @($Runs | Where-Object {
+  $matches = @($Runs | Where-Object {
     $_.headSha -eq $Head -and $_.event -eq 'push'
-  } | Sort-Object { [DateTimeOffset]$_.createdAt } -Descending | Select-Object -First 1)[0]
+  } | Sort-Object { [DateTimeOffset]$_.createdAt } -Descending | Select-Object -First 1)
+  if ($matches.Count -eq 0) { return $null }
+  return $matches[0]
+}
+
+function Get-PagesWorkflowRuns {
+  param(
+    [int]$TimeoutSeconds = 60,
+    [scriptblock]$Native
+  )
+
+  $arguments = @(
+    'run', 'list',
+    '--workflow', 'pages.yml',
+    '--branch', 'master',
+    '--limit', '100',
+    '--json', 'databaseId,headSha,status,conclusion,url,createdAt,updatedAt,event'
+  )
+  $result = if ($null -eq $Native) {
+    Invoke-CheckedNative -FilePath 'gh' -Arguments $arguments -TimeoutSeconds $TimeoutSeconds
+  } else {
+    & $Native 'gh' $arguments $TimeoutSeconds
+  }
+  if (-not $result.StdOut.Trim()) { return @() }
+  return @($result.StdOut | ConvertFrom-Json)
 }
 
 function Assert-SuccessfulPagesRun {
@@ -770,8 +804,7 @@ function New-DeploymentAdapters {
     }
     RunList = {
       param($timeoutSeconds)
-      $json = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'list', '--workflow', 'pages.yml', '--branch', 'master', '--json', 'databaseId,headSha,status,conclusion,url,createdAt,updatedAt,event') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds)))).StdOut
-      return @($json | ConvertFrom-Json)
+      return @(Get-PagesWorkflowRuns -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds))))
     }
     WatchRun = {
       param($id, $timeoutSeconds)

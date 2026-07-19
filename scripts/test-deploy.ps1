@@ -111,6 +111,28 @@ Test-Case 'remote relation matrix is stable' {
   Assert-True ((Resolve-RemoteRelation 'a' 'b' $false $false) -eq 'diverged') 'diverged failed'
 }
 
+Test-Case 'repository slug parser accepts HTTPS SCP-like and SSH URLs' {
+  $urls = @(
+    'https://github.com/green-tea-king/md-mind-map.git',
+    'git@github.com:green-tea-king/md-mind-map.git',
+    'ssh://git@github.com/green-tea-king/md-mind-map.git'
+  )
+  foreach ($url in $urls) {
+    Assert-True ((ConvertTo-RepositorySlug -RemoteUrl $url) -eq 'green-tea-king/md-mind-map') "repository slug parse failed for $url"
+  }
+}
+
+Test-Case 'repository identity rejects non-GitHub URLs and wrong slugs' {
+  Assert-True ([bool](Get-Command Assert-RepositorySlug -ErrorAction SilentlyContinue)) 'Assert-RepositorySlug is undefined'
+  foreach ($url in @('https://example.com/green-tea-king/md-mind-map.git', 'ssh://git@example.com/green-tea-king/md-mind-map.git')) {
+    $threw = $false; try { ConvertTo-RepositorySlug -RemoteUrl $url } catch { $threw = $true }
+    Assert-True $threw "non-GitHub URL was accepted: $url"
+  }
+  $threw = $false; try { Assert-RepositorySlug -Slug 'green-tea-king/another-repo' } catch { $threw = $true }
+  Assert-True $threw 'wrong GitHub repository slug was accepted'
+  Assert-RepositorySlug -Slug 'green-tea-king/md-mind-map'
+}
+
 Test-Case 'exact untracked paths are accepted' {
   Assert-ExactUntrackedSet -Actual @('dir\file') -Expected @('dir/file')
 }
@@ -264,10 +286,33 @@ function New-TestDeploymentAdapters(
 }
 
 Test-Case 'exact HEAD run selection chooses newest push run' {
-  $older = $successfulRun.PSObject.Copy(); $older.databaseId = 41; $older.createdAt = '2026-07-19T01:00:00Z'
+  $wrongRuns = @(1..20 | ForEach-Object {
+    $wrong = $successfulRun.PSObject.Copy()
+    $wrong.databaseId = $_
+    $wrong.headSha = 'c' * 40
+    $wrong.createdAt = "2026-07-18T$($_.ToString('00')):00:00Z"
+    $wrong
+  })
   $dispatch = $successfulRun.PSObject.Copy(); $dispatch.databaseId = 43; $dispatch.event = 'workflow_dispatch'; $dispatch.createdAt = '2026-07-19T03:00:00Z'
-  $selected = Select-ExactHeadRun -Runs @($older, $dispatch, $successfulRun) -Head $testHead
+  $selected = Select-ExactHeadRun -Runs @($wrongRuns + @($dispatch, $successfulRun)) -Head $testHead
   Assert-True ($selected.databaseId -eq 42) 'newest exact push run was not selected'
+}
+
+Test-Case 'production Pages discovery requests 100 workflow runs' {
+  $nativeCalls = [Collections.Generic.List[object]]::new()
+  $native = {
+    param($filePath, $arguments, $timeoutSeconds)
+    [void]$nativeCalls.Add([pscustomobject]@{ FilePath = $filePath; Arguments = @($arguments); TimeoutSeconds = $timeoutSeconds })
+    return [pscustomobject]@{ ExitCode = 0; StdOut = '[]'; StdErr = '' }
+  }.GetNewClosure()
+  $runs = @(Get-PagesWorkflowRuns -TimeoutSeconds 30 -Native $native)
+  Assert-True ($runs.Count -eq 0) 'empty gh run list fixture was not parsed'
+  Assert-True ($nativeCalls.Count -eq 1) 'gh run list native adapter was not called exactly once'
+  $call = $nativeCalls[0]
+  Assert-True ($call.FilePath -eq 'gh') 'Pages discovery did not call gh'
+  Assert-True ($call.TimeoutSeconds -eq 30) 'Pages discovery did not forward the remaining timeout'
+  $joined = $call.Arguments -join ' '
+  Assert-True ($joined -match '^run list --workflow pages\.yml --branch master --limit 100 --json ') "Pages discovery args did not include --limit 100: $joined"
 }
 
 Test-Case 'successful Pages run rejects the wrong HEAD SHA' {
@@ -296,6 +341,23 @@ Test-Case 'Pages run rejects incomplete failed and cancelled states' {
   )
   $threw = $false; try { Assert-SuccessfulPagesRun -Run $badJob -Head $testHead } catch { $threw = $true }
   Assert-True $threw 'failed deploy job was accepted'
+}
+
+Test-Case 'missing exact HEAD run retries within a bounded timeout' {
+  $calls = [Collections.Generic.List[string]]::new()
+  $adapters = @{
+    RunList = { param($timeoutSeconds) [void]$calls.Add("list:$timeoutSeconds"); return @() }.GetNewClosure()
+    WatchRun = { param($id, $timeoutSeconds) [void]$calls.Add("watch:$id") }.GetNewClosure()
+    RunView = { param($id, $timeoutSeconds) throw 'RunView must not run without an exact match' }
+    Sleep = { param($seconds) [void]$calls.Add("sleep:$seconds") }.GetNewClosure()
+  }
+  $threw = $false
+  try { Wait-ExactHeadRun -Head $testHead -Adapters $adapters -TimeoutSeconds 0 } catch {
+    $threw = $_.Exception.Message -match 'Timed out' -and $_.Exception.Message -match $testHead
+  }
+  Assert-True $threw 'missing exact HEAD run did not report a bounded timeout with the HEAD'
+  Assert-True (@($calls | Where-Object { $_ -like 'list:*' }).Count -eq 1) 'zero-bound lookup did not perform exactly one observation'
+  Assert-True (@($calls | Where-Object { $_ -like 'watch:*' -or $_ -like 'sleep:*' }).Count -eq 0) 'missing run was watched or slept past the bound'
 }
 
 Test-Case 'live source exact SHA-256 match succeeds in memory' {
