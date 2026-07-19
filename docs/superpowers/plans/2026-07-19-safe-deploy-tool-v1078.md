@@ -367,10 +367,10 @@ JSON.stringify({
   title: document.title,
   brand: document.querySelector('#brandName')?.textContent?.trim() || '',
   versionText: document.querySelector('#versionText')?.textContent?.trim() || '',
-  selfTest: document.body.dataset.ciSelfTest || '',
-  passed: Number(document.body.dataset.ciSelfTestPassed || 0),
-  failed: Number(document.body.dataset.ciSelfTestFailed || 0),
-  detail: document.body.dataset.ciSelfTestDetail || ''
+  selfTest: document.documentElement.dataset.ciSelfTest || '',
+  passed: Number(document.documentElement.dataset.ciSelfTestPassed || 0),
+  failed: Number(document.documentElement.dataset.ciSelfTestFailed || 0),
+  detail: document.documentElement.dataset.ciSelfTestDetail || ''
 })
 ```
 
