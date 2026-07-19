@@ -641,8 +641,10 @@ Test-Case 'primary browser timeout keeps evidence when cleanup also fails' {
 function Get-ChromeFamilyProcessIds {
   $ids = [Collections.Generic.List[int]]::new()
   foreach ($name in @('chrome', 'google-chrome', 'chromium', 'chromium-browser')) {
-    foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
-      if (-not $ids.Contains($process.Id)) { $ids.Add($process.Id) }
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='$name.exe'" -ErrorAction SilentlyContinue)) {
+      if ($process.CommandLine -match '(?i)mk2md-chrome-[0-9a-f]{32}' -and -not $ids.Contains([int]$process.ProcessId)) {
+        $ids.Add([int]$process.ProcessId)
+      }
     }
   }
   return @($ids)
