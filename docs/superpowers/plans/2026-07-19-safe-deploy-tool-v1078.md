@@ -366,7 +366,7 @@ The DOM evaluation expression must return JSON with exact fields:
 JSON.stringify({
   title: document.title,
   brand: document.querySelector('#brandName')?.textContent?.trim() || '',
-  versionText: document.querySelector('#versionText')?.textContent?.trim() || '',
+  versionText: document.querySelector('#appVersion')?.textContent?.trim() || '',
   selfTest: document.documentElement.dataset.ciSelfTest || '',
   passed: Number(document.documentElement.dataset.ciSelfTestPassed || 0),
   failed: Number(document.documentElement.dataset.ciSelfTestFailed || 0),
