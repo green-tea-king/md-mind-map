@@ -56,6 +56,8 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Assert-ExpectedHead',
     'Get-FreeLoopbackPort',
     'Get-InstalledChromePath',
+    'New-OwnedChromeProfile',
+    'Remove-OwnedChromeProfile',
     'Start-LocalSiteServer',
     'Stop-OwnedProcess',
     'Receive-CdpMessage',
@@ -432,11 +434,51 @@ Test-Case 'installed Chrome discovery supports the current Windows or CI host' {
     "installed Chrome discovery returned an invalid path: $chromePath"
 }
 
-function Invoke-RealChromeFixture([string]$BodyScript) {
-  $tempRoot = [IO.Path]::GetTempPath()
-  $chromeBefore = @(Get-Process chrome -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-  $profilesBefore = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
-    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+Test-Case 'owned Chrome profile lifecycle is unique exact and fail-closed' {
+  $first = New-OwnedChromeProfile
+  $second = New-OwnedChromeProfile
+  try {
+    Assert-True ($first.Path -ne $second.Path) 'owned Chrome profiles were not unique'
+    foreach ($profile in @($first, $second)) {
+      Assert-True (Test-Path -LiteralPath $profile.Path -PathType Container) `
+        "owned Chrome profile was not created: $($profile.Path)"
+      Assert-True ((Split-Path -Leaf $profile.Path) -match '^mk2md-chrome-[0-9a-f]{32}$') `
+        "owned Chrome profile name was unsafe: $($profile.Path)"
+      Assert-True ([IO.Path]::GetFullPath((Split-Path -Parent $profile.Path)).TrimEnd('\','/') -eq `
+        [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')) `
+        "owned Chrome profile escaped TEMP: $($profile.Path)"
+    }
+
+    $wrong = [pscustomobject]@{
+      Path = $first.Path
+      TempRoot = $first.TempRoot
+      Token = 'wrong-token'
+      MarkerPath = $first.MarkerPath
+    }
+    $threw = $false
+    try { Remove-OwnedChromeProfile -Profile $wrong } catch { $threw = $_.Exception.Message -match 'marker|owned' }
+    Assert-True $threw 'owned Chrome cleanup accepted the wrong creation token'
+    Assert-True (Test-Path -LiteralPath $first.Path -PathType Container) `
+      'failed-closed Chrome cleanup removed the protected profile'
+  } finally {
+    if (Test-Path -LiteralPath $first.Path) { Remove-OwnedChromeProfile -Profile $first }
+    if (Test-Path -LiteralPath $second.Path) { Remove-OwnedChromeProfile -Profile $second }
+  }
+  Assert-True (-not (Test-Path -LiteralPath $first.Path)) 'first owned Chrome profile was not removed'
+  Assert-True (-not (Test-Path -LiteralPath $second.Path)) 'second owned Chrome profile was not removed'
+}
+
+function Get-ChromeFamilyProcessIds {
+  $ids = [Collections.Generic.List[int]]::new()
+  foreach ($name in @('chrome', 'google-chrome', 'chromium', 'chromium-browser')) {
+    foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+      if (-not $ids.Contains($process.Id)) { $ids.Add($process.Id) }
+    }
+  }
+  return @($ids)
+}
+
+function New-RealChromeFixtureUrl([string]$BodyScript) {
   $html = @"
 <!doctype html><meta charset="utf-8"><title>MK2MD v10.78</title>
 <div id="brandName">MK2MD</div><div id="appVersion">v10.78 · 2026-07-19</div>
@@ -447,18 +489,34 @@ document.documentElement.dataset.ciSelfTestFailed='0';
 $BodyScript
 </script>
 "@
-  $url = [uri]('data:text/html;charset=utf-8,' + [uri]::EscapeDataString($html))
+  return [uri]('data:text/html;charset=utf-8,' + [uri]::EscapeDataString($html))
+}
+
+function Invoke-RealChromeFixture([string]$BodyScript) {
+  $tempRoot = [IO.Path]::GetTempPath()
+  $chromeBefore = @(Get-ChromeFamilyProcessIds)
+  $profilesBefore = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
+    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
   $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-  $result = Invoke-ChromeSelfTest -Url $url -ExpectedVersion '10.78' -ExpectedDate '2026-07-19'
+  $result = Invoke-ChromeSelfTest -Url (New-RealChromeFixtureUrl $BodyScript) `
+    -ExpectedVersion '10.78' -ExpectedDate '2026-07-19'
   $stopwatch.Stop()
 
-  $chromeAfter = @(Get-Process chrome -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+  $chromeAfter = @(Get-ChromeFamilyProcessIds)
   $profilesAfter = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
     -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
   $newChrome = @($chromeAfter | Where-Object { $_ -notin $chromeBefore })
+  $missingPreexistingChrome = @($chromeBefore | Where-Object { $_ -notin $chromeAfter })
   $newProfiles = @($profilesAfter | Where-Object { $_ -notin $profilesBefore })
   Assert-True ($newChrome.Count -eq 0) "real Chrome fixture leaked owned processes: $($newChrome -join ', ')"
+  Assert-True ($missingPreexistingChrome.Count -eq 0) `
+    "real Chrome fixture stopped pre-existing Chrome processes: $($missingPreexistingChrome -join ', ')"
   Assert-True ($newProfiles.Count -eq 0) "real Chrome fixture leaked owned profiles: $($newProfiles -join ', ')"
+  Assert-True ($result.ChromeProfileUsed) 'real Chrome did not confirm use of its owned profile'
+  Assert-True ((Split-Path -Leaf $result.ChromeProfilePath) -match '^mk2md-chrome-[0-9a-f]{32}$') `
+    "real Chrome returned an unsafe profile path: $($result.ChromeProfilePath)"
+  Assert-True (-not (Test-Path -LiteralPath $result.ChromeProfilePath)) `
+    "real Chrome profile was not removed: $($result.ChromeProfilePath)"
 
   return [pscustomobject]@{ Result = $result; ElapsedMilliseconds = $stopwatch.ElapsedMilliseconds }
 }
@@ -467,16 +525,62 @@ Test-Case 'real Chrome captures a page error delayed by 1500 milliseconds' {
   $fixture = Invoke-RealChromeFixture "setTimeout(() => { throw new Error('mk2md-delayed-page-error'); }, 1500);"
   Assert-True (@($fixture.Result.PageErrors | Where-Object { $_ -match 'mk2md-delayed-page-error' }).Count -gt 0) `
     "delayed page error was missed: $(@($fixture.Result.PageErrors) -join ' | ')"
-  Assert-True ($fixture.ElapsedMilliseconds -lt 5000) `
-    "delayed Chrome fixture exceeded the 5000ms hard maximum: $($fixture.ElapsedMilliseconds)ms"
+  Assert-True ($fixture.Result.ObservationElapsedMilliseconds -ge 2000 -and `
+    $fixture.Result.ObservationElapsedMilliseconds -le 5000) `
+    "delayed Chrome observation escaped 2000-5000ms: $($fixture.Result.ObservationElapsedMilliseconds)ms"
+  Assert-True ($fixture.ElapsedMilliseconds -lt 30000) `
+    "delayed Chrome startup/observation/cleanup exceeded 30000ms: $($fixture.ElapsedMilliseconds)ms"
 }
 
 Test-Case 'clean real Chrome fixture stays error-free within the hard maximum' {
   $fixture = Invoke-RealChromeFixture ''
-  Assert-True ($fixture.ElapsedMilliseconds -lt 5000) `
-    "clean Chrome fixture exceeded the 5000ms hard maximum: $($fixture.ElapsedMilliseconds)ms"
+  Assert-True ($fixture.Result.ObservationElapsedMilliseconds -ge 2000 -and `
+    $fixture.Result.ObservationElapsedMilliseconds -le 5000) `
+    "clean Chrome observation escaped 2000-5000ms: $($fixture.Result.ObservationElapsedMilliseconds)ms"
+  Assert-True ($fixture.ElapsedMilliseconds -lt 30000) `
+    "clean Chrome startup/observation/cleanup exceeded 30000ms: $($fixture.ElapsedMilliseconds)ms"
   Assert-True (@($fixture.Result.ConsoleErrors).Count -eq 0) 'clean Chrome fixture reported console errors'
   Assert-True (@($fixture.Result.PageErrors).Count -eq 0) 'clean Chrome fixture reported page errors'
+}
+
+Test-Case 'real Chrome diagnostic resets the quiet window' {
+  $fixture = Invoke-RealChromeFixture `
+    "setTimeout(() => { console.warn('mk2md-quiet-window-reset'); }, 1900);"
+  Assert-True (@($fixture.Result.Warnings | Where-Object { $_ -match 'mk2md-quiet-window-reset' }).Count -gt 0) `
+    'quiet-window diagnostic was not captured'
+  Assert-True ($fixture.Result.ObservationElapsedMilliseconds -ge 2300 -and `
+    $fixture.Result.ObservationElapsedMilliseconds -le 5000) `
+    "quiet window was not reset within the hard maximum: $($fixture.Result.ObservationElapsedMilliseconds)ms"
+}
+
+Test-Case 'continuous real Chrome diagnostics stop at the hard maximum and clean up' {
+  $tempRoot = [IO.Path]::GetTempPath()
+  $chromeBefore = @(Get-ChromeFamilyProcessIds)
+  $profilesBefore = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
+    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  $threw = $false
+  try {
+    [void](Invoke-ChromeSelfTest `
+      -Url (New-RealChromeFixtureUrl "setInterval(() => { console.warn('mk2md-continuous-diagnostic'); }, 100);") `
+      -ExpectedVersion '10.78' -ExpectedDate '2026-07-19')
+  } catch {
+    $threw = $_.Exception.Message -match '5000ms|total deadline'
+  } finally {
+    $stopwatch.Stop()
+  }
+  $chromeAfter = @(Get-ChromeFamilyProcessIds)
+  $profilesAfter = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'mk2md-chrome-*' `
+    -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+  Assert-True $threw 'continuous diagnostics did not fail at the observation hard maximum'
+  Assert-True ($stopwatch.ElapsedMilliseconds -lt 30000) `
+    "continuous-diagnostic Chrome lifecycle exceeded 30000ms: $($stopwatch.ElapsedMilliseconds)ms"
+  Assert-True (@($chromeAfter | Where-Object { $_ -notin $chromeBefore }).Count -eq 0) `
+    'continuous-diagnostic fixture leaked Chrome processes'
+  Assert-True (@($chromeBefore | Where-Object { $_ -notin $chromeAfter }).Count -eq 0) `
+    'continuous-diagnostic fixture stopped a pre-existing Chrome process'
+  Assert-True (@($profilesAfter | Where-Object { $_ -notin $profilesBefore }).Count -eq 0) `
+    'continuous-diagnostic fixture leaked owned profiles'
 }
 
 Test-Case 'browser result accepts the current clean baseline after bounded observation' {

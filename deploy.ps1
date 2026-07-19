@@ -156,6 +156,91 @@ function Get-InstalledChromePath {
   return $chromePath
 }
 
+function New-OwnedChromeProfile {
+  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd(
+    [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  )
+  $token = [Guid]::NewGuid().ToString('N')
+  $profilePath = [IO.Path]::GetFullPath((Join-Path $tempRoot "mk2md-chrome-$token"))
+  if (Test-Path -LiteralPath $profilePath) { throw "Owned Chrome profile already exists: $profilePath" }
+
+  [void][IO.Directory]::CreateDirectory($profilePath)
+  $markerPath = Join-Path $profilePath '.mk2md-owned-profile'
+  try {
+    [IO.File]::WriteAllText($markerPath, $token, [Text.UTF8Encoding]::new($false))
+  } catch {
+    [IO.Directory]::Delete($profilePath, $true)
+    throw
+  }
+  return [pscustomobject]@{
+    Path = $profilePath
+    TempRoot = $tempRoot
+    Token = $token
+    MarkerPath = $markerPath
+  }
+}
+
+function Remove-OwnedChromeProfile {
+  param([Parameter(Mandatory)][object]$Profile)
+
+  foreach ($property in @('Path', 'TempRoot', 'Token', 'MarkerPath')) {
+    if (-not ($Profile.PSObject.Properties.Name -contains $property) -or -not [string]$Profile.$property) {
+      throw "Owned Chrome profile metadata is missing: $property"
+    }
+  }
+
+  $trimChars = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $expectedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd($trimChars)
+  $recordedTempRoot = [IO.Path]::GetFullPath([string]$Profile.TempRoot).TrimEnd($trimChars)
+  $profilePath = [IO.Path]::GetFullPath([string]$Profile.Path).TrimEnd($trimChars)
+  $profileParent = [IO.Directory]::GetParent($profilePath).FullName.TrimEnd($trimChars)
+  $profileLeaf = [IO.Path]::GetFileName($profilePath)
+  $token = [string]$Profile.Token
+  $expectedMarker = [IO.Path]::GetFullPath((Join-Path $profilePath '.mk2md-owned-profile'))
+  $recordedMarker = [IO.Path]::GetFullPath([string]$Profile.MarkerPath)
+  $pathComparison = if ($IsWindows) {
+    [StringComparison]::OrdinalIgnoreCase
+  } else {
+    [StringComparison]::Ordinal
+  }
+
+  if (-not [string]::Equals($recordedTempRoot, $expectedTempRoot, $pathComparison) -or
+      -not [string]::Equals($profileParent, $expectedTempRoot, $pathComparison) -or
+      $token -notmatch '^[0-9a-f]{32}$' -or
+      -not [string]::Equals($profileLeaf, "mk2md-chrome-$token", $pathComparison) -or
+      -not [string]::Equals($recordedMarker, $expectedMarker, $pathComparison)) {
+    throw "Refusing to remove a path that is not this run's owned Chrome profile: $profilePath"
+  }
+  if (-not (Test-Path -LiteralPath $profilePath)) { return }
+
+  $resolvedPath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $profilePath -ErrorAction Stop).Path).TrimEnd($trimChars)
+  if (-not [string]::Equals($resolvedPath, $profilePath, $pathComparison)) {
+    throw "Refusing to remove a redirected owned Chrome profile: $profilePath"
+  }
+  $profileItem = Get-Item -LiteralPath $profilePath -Force -ErrorAction Stop
+  if (-not $profileItem.PSIsContainer -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Refusing to remove a non-directory or reparse-point Chrome profile: $profilePath"
+  }
+  if (-not (Test-Path -LiteralPath $expectedMarker -PathType Leaf)) {
+    throw "Owned Chrome profile marker is missing: $expectedMarker"
+  }
+  $markerToken = [IO.File]::ReadAllText($expectedMarker, [Text.Encoding]::UTF8)
+  if ($markerToken -ne $token) { throw "Owned Chrome profile marker does not match: $expectedMarker" }
+
+  for ($attempt = 1; $attempt -le 20; $attempt++) {
+    try {
+      [IO.Directory]::Delete($profilePath, $true)
+      break
+    } catch [IO.IOException] {
+      if ($attempt -eq 20) { throw }
+    } catch [UnauthorizedAccessException] {
+      if ($attempt -eq 20) { throw }
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  if (Test-Path -LiteralPath $profilePath) { throw "Owned Chrome profile was not removed: $profilePath" }
+}
+
 function Stop-OwnedProcess {
   param(
     [Parameter(Mandatory)][Diagnostics.Process]$Process,
@@ -399,23 +484,31 @@ function Invoke-ChromeSelfTest {
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-gpu',
-    '--disable-background-timer-throttling',
-    'about:blank'
+    '--disable-background-timer-throttling'
   )) { [void]$psi.ArgumentList.Add($argument) }
 
   $chrome = [Diagnostics.Process]::new()
   $chrome.StartInfo = $psi
-  [void]$chrome.Start()
-  $chrome | Add-Member -NotePropertyName Mk2mdOwnedPort -NotePropertyValue $debugPort
-  $chrome | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $chrome.StandardOutput.ReadToEndAsync()
-  $chrome | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $chrome.StandardError.ReadToEndAsync()
-
   $handler = [Net.Http.HttpClientHandler]::new()
   $handler.UseProxy = $false
   $client = [Net.Http.HttpClient]::new($handler)
   $client.Timeout = [TimeSpan]::FromSeconds(2)
   $socket = [Net.WebSockets.ClientWebSocket]::new()
+  $ownedProfile = $null
+  $chromeStarted = $false
+  $browserResult = $null
   try {
+    $ownedProfile = New-OwnedChromeProfile
+    $userDataArgument = "--user-data-dir=$($ownedProfile.Path)"
+    [void]$psi.ArgumentList.Add($userDataArgument)
+    [void]$psi.ArgumentList.Add('about:blank')
+
+    [void]$chrome.Start()
+    $chromeStarted = $true
+    $chrome | Add-Member -NotePropertyName Mk2mdOwnedPort -NotePropertyValue $debugPort
+    $chrome | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $chrome.StandardOutput.ReadToEndAsync()
+    $chrome | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $chrome.StandardError.ReadToEndAsync()
+
     $debugBase = "http://127.0.0.1:$debugPort"
     $versionReady = $false
     for ($attempt = 1; $attempt -le 60; $attempt++) {
@@ -431,6 +524,11 @@ function Invoke-ChromeSelfTest {
       Start-Sleep -Milliseconds 250
     }
     if (-not $versionReady) { throw "Chrome CDP did not become ready on loopback port $debugPort." }
+    $profileEntries = @(Get-ChildItem -LiteralPath $ownedProfile.Path -Force -ErrorAction Stop | Where-Object {
+      -not [string]::Equals($_.FullName, $ownedProfile.MarkerPath, [StringComparison]::OrdinalIgnoreCase)
+    })
+    $chromeProfileUsed = ($psi.ArgumentList -contains $userDataArgument) -and $profileEntries.Count -gt 0
+    if (-not $chromeProfileUsed) { throw "Chrome did not use its owned profile: $($ownedProfile.Path)" }
 
     $encodedUrl = [uri]::EscapeDataString($Url.AbsoluteUri)
     $targetRequest = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Put, "$debugBase/json/new?$encodedUrl")
@@ -502,6 +600,7 @@ JSON.stringify({
       throw "Chrome self-test did not finish within 90 seconds for MK2MD v$ExpectedVersion ($ExpectedDate)."
     }
 
+    $observationStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $observationStartedAt = [DateTime]::UtcNow
     $minimumObservationDeadline = $observationStartedAt.AddMilliseconds(
       $script:CdpMinimumObservationMilliseconds
@@ -549,7 +648,10 @@ JSON.stringify({
       $minimumObserved = $now -ge $minimumObservationDeadline
       $quietObserved = ($now - $lastDiagnosticEventAt).TotalMilliseconds -ge `
         $script:CdpQuietWindowMilliseconds
-      if ($minimumObserved -and $quietObserved) { break }
+      if ($minimumObserved -and $quietObserved) {
+        $observationStopwatch.Stop()
+        break
+      }
     }
 
     $consoleErrors = [Collections.Generic.List[string]]::new()
@@ -580,7 +682,7 @@ JSON.stringify({
       }
     }
 
-    return [pscustomobject]@{
+    $browserResult = [pscustomobject]@{
       Title = [string]$dom.title
       Brand = [string]$dom.brand
       VersionText = [string]$dom.versionText
@@ -589,6 +691,9 @@ JSON.stringify({
       ConsoleErrors = @($consoleErrors)
       PageErrors = @($pageErrors)
       Warnings = @($warnings)
+      ObservationElapsedMilliseconds = $observationStopwatch.ElapsedMilliseconds
+      ChromeProfilePath = $ownedProfile.Path
+      ChromeProfileUsed = $chromeProfileUsed
     }
   } finally {
     $closeFailure = ''
@@ -612,12 +717,20 @@ JSON.stringify({
         $closeCancellation.Dispose()
       }
     }
-    $socket.Dispose()
-    $client.Dispose()
-    $handler.Dispose()
-    Stop-OwnedProcess -Process $chrome -Label 'headless Chrome'
+    try {
+      $socket.Dispose()
+      $client.Dispose()
+      $handler.Dispose()
+    } finally {
+      try {
+        if ($chromeStarted) { Stop-OwnedProcess -Process $chrome -Label 'headless Chrome' }
+      } finally {
+        if ($null -ne $ownedProfile) { Remove-OwnedChromeProfile -Profile $ownedProfile }
+      }
+    }
     if ($closeFailure) { throw $closeFailure }
   }
+  return $browserResult
 }
 
 function Assert-BrowserResult {
