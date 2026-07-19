@@ -63,6 +63,11 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Assert-BrowserResult',
     'Get-RemoteIdentity',
     'Get-RepositoryContext',
+    'Get-RemainingWholeSeconds',
+    'Watch-PagesWorkflowRun',
+    'Get-PagesWorkflowRun',
+    'Get-RepositoryState',
+    'Assert-ExactRepositoryState',
     'Invoke-Mk2mdDeployment'
   )
   foreach ($name in $requiredFunctions) {
@@ -328,6 +333,41 @@ Test-Case 'production preflight compares the earliest protected snapshot after a
     "protected snapshot was not rechecked after all context probes: $($keys -join '|')"
 }
 
+Test-Case 'production final repository observation uses the checked native seam' {
+  $calls = [Collections.Generic.List[string]]::new()
+  $head = 'a' * 40
+  $untrackedFixture = @($script:ProtectedUntracked)
+  $native = {
+    param($filePath, $arguments, $repoPath, $allowedExitCodes, $timeoutSeconds)
+    $joined = @($arguments) -join ' '
+    [void]$calls.Add("$filePath $joined")
+    $stdout = switch -Regex ("$filePath $joined") {
+      '^git branch --show-current$' { 'master'; break }
+      '^git rev-parse HEAD$' { $head; break }
+      '^git rev-parse refs/remotes/origin/master$' { $head; break }
+      '^git remote get-url --all origin$' { 'https://github.com/green-tea-king/md-mind-map.git'; break }
+      '^git remote get-url --push --all origin$' { 'https://github.com/green-tea-king/md-mind-map.git'; break }
+      '^git diff --quiet$' { ''; break }
+      '^git diff --cached --quiet$' { ''; break }
+      '^git -c core\.quotepath=false status --porcelain=v1 -uall$' {
+        ($untrackedFixture | ForEach-Object { "?? $_" }) -join "`n"
+        break
+      }
+      '^git ls-remote origin refs/heads/master$' { "$head`trefs/heads/master"; break }
+      default { throw "Unexpected final-state command: $filePath $joined" }
+    }
+    return [pscustomobject]@{ ExitCode = 0; StdOut = $stdout; StdErr = '' }
+  }.GetNewClosure()
+  $snapshot = { param($repoPath, $protectedPaths) [ordered]@{ fixture = 'same' } }
+  $state = Get-RepositoryState -Repo 'fixture' -Native $native -SnapshotProvider $snapshot
+  Assert-True ($state.Branch -eq 'master' -and $state.Head -eq $head) 'final state omitted branch or HEAD'
+  Assert-True ($state.OriginHead -eq $head -and $state.RemoteHead -eq $head) 'final state omitted origin/master or remote HEAD'
+  Assert-True ($state.TrackedClean -and $state.StagedClean) 'final state reported clean fixtures as dirty'
+  Assert-True (@($state.Untracked).Count -eq 6) `
+    "final state did not preserve the exact untracked set: $(@($state.Untracked).Count) [$(@($state.Untracked) -join '|')]"
+  Assert-True (@($calls | Where-Object { $_ -like 'git *' }).Count -ge 9) 'final state bypassed the production native seam'
+}
+
 Test-Case 'exact untracked paths are accepted' {
   Assert-ExactUntrackedSet -Actual @('dir\file') -Expected @('dir/file')
 }
@@ -429,6 +469,8 @@ function New-TestRepositoryContext([string]$Relation) {
   [pscustomobject]@{
     Branch = 'master'
     OriginSlug = 'green-tea-king/md-mind-map'
+    FetchUrl = 'https://github.com/green-tea-king/md-mind-map.git'
+    PushUrl = 'https://github.com/green-tea-king/md-mind-map.git'
     Head = $testHead
     RemoteHead = if ($Relation -eq 'equal') { $testHead } else { $testRemote }
     Relation = $Relation
@@ -436,6 +478,22 @@ function New-TestRepositoryContext([string]$Relation) {
     Date = '2026-07-17'
     Commits = @('fixture commit')
     ChangedPaths = @('deploy.ps1')
+    Untracked = @($script:ProtectedUntracked)
+    ProtectedHashes = [ordered]@{ fixture = 'same' }
+  }
+}
+
+function New-TestRepositoryState([object]$Context) {
+  [pscustomobject]@{
+    Branch = 'master'
+    Head = $Context.Head
+    OriginHead = $Context.Head
+    RemoteHead = $Context.Head
+    FetchUrl = $Context.FetchUrl
+    PushUrl = $Context.PushUrl
+    TrackedClean = $true
+    StagedClean = $true
+    Untracked = @($script:ProtectedUntracked)
     ProtectedHashes = [ordered]@{ fixture = 'same' }
   }
 }
@@ -445,9 +503,12 @@ function New-TestDeploymentAdapters(
   [object]$Context,
   [object[]]$Runs,
   [object]$RunView,
-  [byte[]]$LiveBytes
+  [byte[]]$LiveBytes,
+  [object]$FinalState = $null
 ) {
   $localBytes = [Text.Encoding]::UTF8.GetBytes('fixture')
+  $browserResult = $goodBrowser
+  if ($null -eq $FinalState) { $FinalState = New-TestRepositoryState $Context }
   return @{
     GetRepositoryContext = { $Context }.GetNewClosure()
     StartLocalSite = {
@@ -458,7 +519,7 @@ function New-TestDeploymentAdapters(
     Browser = {
       param($url, $version, $date)
       [void]$Calls.Add("browser:$url")
-      return $goodBrowser
+      return $browserResult
     }.GetNewClosure()
     Push = { param($head) [void]$Calls.Add("push:$head") }.GetNewClosure()
     RunList = { [void]$Calls.Add('run-list'); return $Runs }.GetNewClosure()
@@ -476,6 +537,10 @@ function New-TestDeploymentAdapters(
       return $LiveBytes
     }.GetNewClosure()
     ProtectedSnapshot = { return $Context.ProtectedHashes }.GetNewClosure()
+    GetRepositoryState = {
+      [void]$Calls.Add('final-state')
+      return $FinalState
+    }.GetNewClosure()
     Sleep = { param($seconds) [void]$Calls.Add("sleep:$seconds") }.GetNewClosure()
   }
 }
@@ -493,28 +558,77 @@ Test-Case 'exact HEAD run selection chooses newest push run' {
   Assert-True ($selected.databaseId -eq 42) 'newest exact push run was not selected'
 }
 
-Test-Case 'production Pages discovery requests 100 workflow runs' {
+Test-Case 'production Pages discovery is pinned to the original repository' {
   $nativeCalls = [Collections.Generic.List[object]]::new()
   $native = {
     param($filePath, $arguments, $timeoutSeconds)
     [void]$nativeCalls.Add([pscustomobject]@{ FilePath = $filePath; Arguments = @($arguments); TimeoutSeconds = $timeoutSeconds })
     return [pscustomobject]@{ ExitCode = 0; StdOut = '[]'; StdErr = '' }
   }.GetNewClosure()
-  $runs = @(Get-PagesWorkflowRuns -TimeoutSeconds 30 -Native $native)
-  Assert-True ($runs.Count -eq 0) 'empty gh run list fixture was not parsed'
-  Assert-True ($nativeCalls.Count -eq 1) 'gh run list native adapter was not called exactly once'
-  $call = $nativeCalls[0]
-  Assert-True ($call.FilePath -eq 'gh') 'Pages discovery did not call gh'
-  Assert-True ($call.TimeoutSeconds -eq 30) 'Pages discovery did not forward the remaining timeout'
-  $joined = $call.Arguments -join ' '
-  Assert-True ($joined -match '^run list --workflow pages\.yml --branch master --limit 100 --json ') "Pages discovery args did not include --limit 100: $joined"
+  $oldGhRepo = $env:GH_REPO
+  try {
+    $env:GH_REPO = 'someone/else'
+    $runs = @(Get-PagesWorkflowRuns -TimeoutSeconds 30 -Native $native)
+    Assert-True ($runs.Count -eq 0) 'empty gh run list fixture was not parsed'
+    Assert-True ($nativeCalls.Count -eq 1) 'gh run list native adapter was not called exactly once'
+    $call = $nativeCalls[0]
+    Assert-True ($call.FilePath -eq 'gh') 'Pages discovery did not call gh'
+    Assert-True ($call.TimeoutSeconds -eq 30) 'Pages discovery did not forward the remaining timeout'
+    $joined = $call.Arguments -join ' '
+    Assert-True ($joined -match '^run list --workflow pages\.yml --branch master --limit 100 --json .+ --repo green-tea-king/md-mind-map$') `
+      "Pages discovery was not pinned to the original repository: $joined"
+  } finally {
+    $env:GH_REPO = $oldGhRepo
+  }
+}
+
+Test-Case 'production Pages watch and view are pinned to the original repository' {
+  $nativeCalls = [Collections.Generic.List[object]]::new()
+  $runFixture = $successfulRun
+  $native = {
+    param($filePath, $arguments, $timeoutSeconds)
+    [void]$nativeCalls.Add([pscustomobject]@{ FilePath = $filePath; Arguments = @($arguments); TimeoutSeconds = $timeoutSeconds })
+    $stdout = if (@($arguments) -contains 'view') { $runFixture | ConvertTo-Json -Compress -Depth 6 } else { '' }
+    return [pscustomobject]@{ ExitCode = 0; StdOut = $stdout; StdErr = '' }
+  }.GetNewClosure()
+  $oldGhRepo = $env:GH_REPO
+  try {
+    $env:GH_REPO = 'someone/else'
+    Watch-PagesWorkflowRun -RunId 42 -TimeoutSeconds 30 -Native $native
+    $view = Get-PagesWorkflowRun -RunId 42 -TimeoutSeconds 30 -Native $native
+    Assert-True ($view.databaseId -eq 42) 'Pages view fixture was not parsed'
+  } finally {
+    $env:GH_REPO = $oldGhRepo
+  }
+  Assert-True ($nativeCalls.Count -eq 2) 'Pages watch/view native adapters were not called exactly once each'
+  Assert-True (($nativeCalls[0].Arguments -join ' ') -eq 'run watch 42 --exit-status --repo green-tea-king/md-mind-map') `
+    "Pages watch was not pinned to the original repository: $($nativeCalls[0].Arguments -join ' ')"
+  Assert-True (($nativeCalls[1].Arguments -join ' ') -match '^run view 42 --repo green-tea-king/md-mind-map --json ') `
+    "Pages view was not pinned to the original repository: $($nativeCalls[1].Arguments -join ' ')"
 }
 
 Test-Case 'successful Pages run rejects the wrong HEAD SHA' {
   $wrong = $successfulRun.PSObject.Copy(); $wrong.headSha = 'c' * 40
   $threw = $false
-  try { Assert-SuccessfulPagesRun -Run $wrong -Head $testHead } catch { $threw = $_.Exception.Message -match 'HEAD' }
+  try { Assert-SuccessfulPagesRun -Run $wrong -Head $testHead -RunId 42 } catch { $threw = $_.Exception.Message -match 'HEAD' }
   Assert-True $threw 'wrong run SHA was accepted'
+}
+
+Test-Case 'successful Pages run requires the canonical repository URL and exact numeric id' {
+  foreach ($case in @(
+    @{ Url = 'https://github.com/someone/else/actions/runs/42'; DatabaseId = 42 },
+    @{ Url = 'https://github.com/green-tea-king/md-mind-map/actions/runs/43'; DatabaseId = 42 },
+    @{ Url = 'https://github.com/green-tea-king/md-mind-map/actions/runs/42'; DatabaseId = 43 }
+  )) {
+    $bad = $successfulRun.PSObject.Copy()
+    $bad.url = $case.Url
+    $bad.databaseId = $case.DatabaseId
+    $threw = $false
+    try { Assert-SuccessfulPagesRun -Run $bad -Head $testHead -RunId 42 } catch {
+      $threw = $_.Exception.Message -match 'URL|run id|database id|canonical'
+    }
+    Assert-True $threw "Pages run URL/id mismatch was accepted: $($case.Url) / $($case.DatabaseId)"
+  }
 }
 
 Test-Case 'Pages run rejects incomplete failed and cancelled states' {
@@ -526,7 +640,7 @@ Test-Case 'Pages run rejects incomplete failed and cancelled states' {
   )) {
     $bad = $successfulRun.PSObject.Copy()
     $bad.status = $state.status; $bad.conclusion = $state.conclusion
-    $threw = $false; try { Assert-SuccessfulPagesRun -Run $bad -Head $testHead } catch { $threw = $true }
+    $threw = $false; try { Assert-SuccessfulPagesRun -Run $bad -Head $testHead -RunId 42 } catch { $threw = $true }
     Assert-True $threw "run state $($state.status)/$($state.conclusion) was accepted"
   }
   $badJob = $successfulRun.PSObject.Copy()
@@ -534,7 +648,7 @@ Test-Case 'Pages run rejects incomplete failed and cancelled states' {
     [pscustomobject]@{ name = 'build'; status = 'completed'; conclusion = 'success' },
     [pscustomobject]@{ name = 'deploy'; status = 'completed'; conclusion = 'failure' }
   )
-  $threw = $false; try { Assert-SuccessfulPagesRun -Run $badJob -Head $testHead } catch { $threw = $true }
+  $threw = $false; try { Assert-SuccessfulPagesRun -Run $badJob -Head $testHead -RunId 42 } catch { $threw = $true }
   Assert-True $threw 'failed deploy job was accepted'
 }
 
@@ -551,8 +665,79 @@ Test-Case 'missing exact HEAD run retries within a bounded timeout' {
     $threw = $_.Exception.Message -match 'Timed out' -and $_.Exception.Message -match $testHead
   }
   Assert-True $threw 'missing exact HEAD run did not report a bounded timeout with the HEAD'
-  Assert-True (@($calls | Where-Object { $_ -like 'list:*' }).Count -eq 1) 'zero-bound lookup did not perform exactly one observation'
-  Assert-True (@($calls | Where-Object { $_ -like 'watch:*' -or $_ -like 'sleep:*' }).Count -eq 0) 'missing run was watched or slept past the bound'
+  Assert-True ($calls.Count -eq 0) "zero-bound lookup called an adapter: $($calls -join '|')"
+}
+
+Test-Case 'remaining whole seconds never creates an artificial extra second' {
+  $deadline = [DateTimeOffset]::UtcNow.AddSeconds(10.9)
+  $remaining = Get-RemainingWholeSeconds -Deadline $deadline -Operation 'fixture'
+  Assert-True ($remaining -gt 0 -and $remaining -le 10) "remaining whole seconds rounded up: $remaining"
+  $threw = $false
+  try { Get-RemainingWholeSeconds -Deadline ([DateTimeOffset]::UtcNow) -Operation 'expired fixture' } catch {
+    $threw = $_.Exception.Message -match 'expired fixture' -and $_.Exception.Message -match 'Timed out'
+  }
+  Assert-True $threw 'expired deadline did not throw with the operation name'
+}
+
+Test-Case 'Actions result returning after the total deadline is rejected' {
+  $calls = [Collections.Generic.List[string]]::new()
+  $adapters = @{
+    RunList = {
+      param($timeoutSeconds)
+      [void]$calls.Add('run-list')
+      Start-Sleep -Milliseconds 2100
+      return @($successfulRun)
+    }.GetNewClosure()
+    WatchRun = { param($id, $timeoutSeconds) [void]$calls.Add('watch') }.GetNewClosure()
+    RunView = { param($id, $timeoutSeconds) [void]$calls.Add('view'); return $successfulRun }.GetNewClosure()
+    Sleep = { param($seconds) [void]$calls.Add('sleep') }.GetNewClosure()
+  }
+  $threw = $false
+  try { Wait-ExactHeadRun -Head $testHead -Adapters $adapters -TimeoutSeconds 2 } catch {
+    $threw = $_.Exception.Message -match 'Timed out'
+  }
+  Assert-True $threw 'late Actions list result was accepted'
+  Assert-True (($calls -join '|') -eq 'run-list') "an adapter ran after the Actions deadline: $($calls -join '|')"
+}
+
+Test-Case 'Actions watch view and retry sleep returning after the deadline are rejected' {
+  foreach ($lateAdapter in @('watch', 'view', 'sleep')) {
+    $calls = [Collections.Generic.List[string]]::new()
+    $scenarioName = $lateAdapter
+    $runFixture = $successfulRun
+    $adapters = @{
+      RunList = {
+        param($timeoutSeconds)
+        [void]$calls.Add('run-list')
+        if ($scenarioName -eq 'sleep') { return @() }
+        return @($runFixture)
+      }.GetNewClosure()
+      WatchRun = {
+        param($id, $timeoutSeconds)
+        [void]$calls.Add('watch')
+        if ($scenarioName -eq 'watch') { Start-Sleep -Milliseconds 2100 }
+      }.GetNewClosure()
+      RunView = {
+        param($id, $timeoutSeconds)
+        [void]$calls.Add('view')
+        if ($scenarioName -eq 'view') { Start-Sleep -Milliseconds 2100 }
+        return $runFixture
+      }.GetNewClosure()
+      Sleep = {
+        param($seconds)
+        [void]$calls.Add('sleep')
+        if ($scenarioName -eq 'sleep') { Start-Sleep -Milliseconds 2100 }
+      }.GetNewClosure()
+    }
+    $threw = $false
+    try { Wait-ExactHeadRun -Head $testHead -Adapters $adapters -TimeoutSeconds 2 } catch {
+      $threw = $_.Exception.Message -match 'Timed out'
+    }
+    Assert-True $threw "late Actions $lateAdapter result was accepted"
+    $lateIndex = $calls.IndexOf($lateAdapter)
+    Assert-True ($lateIndex -eq ($calls.Count - 1)) `
+      "an adapter ran after late Actions $lateAdapter`: $($calls -join '|')"
+  }
 }
 
 Test-Case 'live source exact SHA-256 match succeeds in memory' {
@@ -564,16 +749,45 @@ Test-Case 'live source exact SHA-256 match succeeds in memory' {
   Assert-True ($result.Match -and $result.Hash -eq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))) 'matching live source was rejected'
 }
 
+Test-Case 'live source transport rejects a nonpositive timeout without adding one second' {
+  $threw = $false
+  try { [void](Get-LiveSourceBytes -Url 'https://example.invalid/' -TimeoutSeconds 0) } catch {
+    $threw = $_.Exception.Message -match 'positive timeout'
+  }
+  Assert-True $threw 'live source transport accepted or artificially extended a zero timeout'
+}
+
 Test-Case 'live source SHA-256 mismatch stops at the bound' {
+  $calls = [Collections.Generic.List[string]]::new()
   $threw = $false
   try {
     Wait-LiveSourceMatch -LiveUrl 'https://example.invalid/' `
       -LocalBytes ([Text.Encoding]::UTF8.GetBytes('local')) -Adapters @{
-        LiveSource = { param($url) [Text.Encoding]::UTF8.GetBytes('remote') }
-        Sleep = { param($seconds) throw 'zero timeout must not sleep' }
+        LiveSource = { param($url) [void]$calls.Add('live-source'); [Text.Encoding]::UTF8.GetBytes('remote') }.GetNewClosure()
+        Sleep = { param($seconds) [void]$calls.Add('sleep') }.GetNewClosure()
       } -TimeoutSeconds 0
   } catch { $threw = $_.Exception.Message -match 'SHA-256' }
   Assert-True $threw 'live mismatch did not fail at the bound'
+  Assert-True ($calls.Count -eq 0) "zero-bound live match called an adapter: $($calls -join '|')"
+}
+
+Test-Case 'matching live source returning after the total deadline is rejected' {
+  $bytes = [Text.Encoding]::UTF8.GetBytes('fixture')
+  $calls = [Collections.Generic.List[string]]::new()
+  $threw = $false
+  try {
+    Wait-LiveSourceMatch -LiveUrl 'https://example.invalid/' -LocalBytes $bytes -Adapters @{
+      LiveSource = {
+        param($url, $timeoutSeconds)
+        [void]$calls.Add('live-source')
+        Start-Sleep -Milliseconds 2100
+        return $bytes
+      }.GetNewClosure()
+      Sleep = { param($seconds) [void]$calls.Add('sleep') }.GetNewClosure()
+    } -TimeoutSeconds 2
+  } catch { $threw = $_.Exception.Message -match 'SHA-256' -and $_.Exception.Message -match 'Timed out' }
+  Assert-True $threw 'late matching live source was accepted'
+  Assert-True (($calls -join '|') -eq 'live-source') "an adapter ran after the live deadline: $($calls -join '|')"
 }
 
 Test-Case 'dry run performs local gates without push Actions or live verification' {
@@ -584,7 +798,7 @@ Test-Case 'dry run performs local gates without push Actions or live verificatio
   Assert-True $result.DryRun 'dry-run report was not returned'
   Assert-True ($calls -contains 'local-start' -and $calls -contains 'local-stop') 'dry run skipped or leaked the local server gate'
   Assert-True (@($calls | Where-Object { $_ -like 'browser:http://127.0.0.1:*' }).Count -eq 1) 'dry run skipped local browser gate'
-  Assert-True (@($calls | Where-Object { $_ -like 'push:*' -or $_ -like 'watch:*' -or $_ -like 'live-source:*' -or $_ -like 'browser:https://*' }).Count -eq 0) 'dry run performed an external deployment action'
+  Assert-True (@($calls | Where-Object { $_ -like 'push:*' -or $_ -like 'watch:*' -or $_ -like 'live-source:*' -or $_ -like 'browser:https://*' -or $_ -eq 'final-state' }).Count -eq 0) 'dry run performed an external deployment action'
 }
 
 Test-Case 'equal remote skips push and verifies exact Actions live and browser' {
@@ -601,6 +815,9 @@ Test-Case 'equal remote skips push and verifies exact Actions live and browser' 
   $liveTimeout = [int](($calls | Where-Object { $_ -like 'live-timeout:*' } | Select-Object -First 1) -replace '^live-timeout:', '')
   Assert-True ($liveTimeout -ge 1 -and $liveTimeout -le 300) 'live fetch did not receive the remaining 5-minute bound'
   Assert-True (@($calls | Where-Object { $_ -like 'browser:https://*' }).Count -eq 1) 'equal relation skipped live browser verification'
+  $liveBrowserCall = @($calls | Where-Object { $_ -like 'browser:https://*' })[0]
+  Assert-True ($calls.IndexOf('final-state') -gt $calls.IndexOf($liveBrowserCall)) `
+    "final repository state was not observed after live browser success: $($calls -join '|')"
 }
 
 Test-Case 'local ahead pushes only the confirmed exact HEAD' {
@@ -610,6 +827,38 @@ Test-Case 'local ahead pushes only the confirmed exact HEAD' {
   $result = Invoke-Mk2mdDeployment -ConfirmedHead $testHead -Adapters $adapters
   Assert-True $result.Pushed 'local-ahead relation did not report a push'
   Assert-True (@($calls | Where-Object { $_ -eq "push:$testHead" }).Count -eq 1) 'local-ahead did not push the exact confirmed HEAD once'
+  Assert-True ($calls -contains 'final-state') 'local-ahead path skipped the final repository state gate'
+}
+
+Test-Case 'equal and local-ahead paths reject every final repository state drift' {
+  $mutations = @(
+    @{ Name = 'branch'; Apply = { param($state) $state.Branch = 'feature' } },
+    @{ Name = 'HEAD'; Apply = { param($state) $state.Head = 'c' * 40 } },
+    @{ Name = 'origin/master'; Apply = { param($state) $state.OriginHead = 'c' * 40 } },
+    @{ Name = 'remote HEAD'; Apply = { param($state) $state.RemoteHead = 'b' * 40 } },
+    @{ Name = 'fetch URL'; Apply = { param($state) $state.FetchUrl = 'https://github.com/someone/else.git' } },
+    @{ Name = 'push URL'; Apply = { param($state) $state.PushUrl = 'https://github.com/someone/else.git' } },
+    @{ Name = 'tracked worktree'; Apply = { param($state) $state.TrackedClean = $false } },
+    @{ Name = 'staged index'; Apply = { param($state) $state.StagedClean = $false } },
+    @{ Name = 'untracked set'; Apply = { param($state) $state.Untracked = @($script:ProtectedUntracked + 'unexpected.txt') } },
+    @{ Name = 'protected hashes'; Apply = { param($state) $state.ProtectedHashes = [ordered]@{ fixture = 'drifted' } } }
+  )
+  foreach ($relation in @('equal', 'local-ahead')) {
+    foreach ($mutation in $mutations) {
+      $calls = [Collections.Generic.List[string]]::new()
+      $context = New-TestRepositoryContext $relation
+      $state = New-TestRepositoryState $context
+      & $mutation.Apply $state
+      $adapters = New-TestDeploymentAdapters $calls $context @($successfulRun) $successfulRun `
+        ([Text.Encoding]::UTF8.GetBytes('fixture')) $state
+      $threw = $false
+      try { [void](Invoke-Mk2mdDeployment -ConfirmedHead $testHead -Adapters $adapters 6>$null) } catch { $threw = $true }
+      Assert-True $threw "$relation accepted final $($mutation.Name) drift"
+      $liveBrowserCall = @($calls | Where-Object { $_ -like 'browser:https://*' })[0]
+      Assert-True ($calls.IndexOf('final-state') -gt $calls.IndexOf($liveBrowserCall)) `
+        "$relation checked final $($mutation.Name) before live browser"
+    }
+  }
 }
 
 Test-Case 'remote ahead stops before browser or push' {

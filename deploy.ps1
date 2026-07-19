@@ -748,6 +748,80 @@ process.stdout.write(JSON.stringify({version,date}));
   }
 }
 
+function Get-RepositoryState {
+  [CmdletBinding()]
+  param(
+    [string]$Repo = $script:RepoRoot,
+    [scriptblock]$Native,
+    [scriptblock]$SnapshotProvider
+  )
+
+  if ($null -eq $SnapshotProvider) {
+    $SnapshotProvider = { param($repoPath, $protectedPaths) Get-ProtectedSnapshot -Repo $repoPath -Paths $protectedPaths }
+  }
+
+  $branch = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('branch', '--show-current') -Repo $Repo).StdOut.Trim()
+  $remoteIdentity = Get-RemoteIdentity -Repo $Repo -Native $Native
+  $head = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
+  $originHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('rev-parse', "refs/remotes/origin/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
+  $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
+  if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable during final verification." }
+  $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
+
+  $workingDiff = Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('diff', '--quiet') `
+    -Repo $Repo -AllowedExitCodes @(0, 1)
+  $stagedDiff = Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('diff', '--cached', '--quiet') `
+    -Repo $Repo -AllowedExitCodes @(0, 1)
+  $statusLines = @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-uall') -Repo $Repo).StdOut `
+    -split "`r?`n" | Where-Object { $_ })
+  $trackedStatus = @($statusLines | Where-Object { -not $_.StartsWith('?? ') })
+  $untracked = @($statusLines | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
+  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
+
+  return [pscustomobject]@{
+    Branch = $branch
+    Head = $head
+    OriginHead = $originHead
+    RemoteHead = $remoteHead
+    FetchUrl = $remoteIdentity.FetchUrl
+    PushUrl = $remoteIdentity.PushUrl
+    TrackedClean = ($workingDiff.ExitCode -eq 0 -and $trackedStatus.Count -eq 0)
+    StagedClean = ($stagedDiff.ExitCode -eq 0)
+    Untracked = $untracked
+    ProtectedHashes = $protectedHashes
+  }
+}
+
+function Assert-ExactRepositoryState {
+  param(
+    [Parameter(Mandatory)][object]$Initial,
+    [Parameter(Mandatory)][object]$Final
+  )
+
+  if ($Final.Branch -ne $script:ExpectedBranch) {
+    throw "Final repository branch '$($Final.Branch)' is not $($script:ExpectedBranch)."
+  }
+  foreach ($property in @('Head', 'OriginHead', 'RemoteHead')) {
+    if ([string]$Final.$property -ne [string]$Initial.Head) {
+      throw "Final repository $property '$($Final.$property)' does not equal initial HEAD '$($Initial.Head)'."
+    }
+  }
+  foreach ($property in @('FetchUrl', 'PushUrl')) {
+    if ([string]$Final.$property -ne [string]$Initial.$property) {
+      throw "Final repository $property changed from '$($Initial.$property)' to '$($Final.$property)'."
+    }
+  }
+  if (-not [bool]$Final.TrackedClean) { throw 'Final repository tracked working tree is not clean.' }
+  if (-not [bool]$Final.StagedClean) { throw 'Final repository staged index is not clean.' }
+  Assert-ExactUntrackedSet -Actual @($Final.Untracked) -Expected $script:ProtectedUntracked
+  Assert-ProtectedSnapshot -Before $Initial.ProtectedHashes -After $Final.ProtectedHashes
+}
+
 function Select-ExactHeadRun {
   param([object[]]$Runs, [Parameter(Mandatory)][string]$Head)
 
@@ -769,7 +843,8 @@ function Get-PagesWorkflowRuns {
     '--workflow', 'pages.yml',
     '--branch', 'master',
     '--limit', '100',
-    '--json', 'databaseId,headSha,status,conclusion,url,createdAt,updatedAt,event'
+    '--json', 'databaseId,headSha,status,conclusion,url,createdAt,updatedAt,event',
+    '--repo', $script:ExpectedRepoSlug
   )
   $result = if ($null -eq $Native) {
     Invoke-CheckedNative -FilePath 'gh' -Arguments $arguments -TimeoutSeconds $TimeoutSeconds
@@ -780,10 +855,63 @@ function Get-PagesWorkflowRuns {
   return @($result.StdOut | ConvertFrom-Json)
 }
 
+function Watch-PagesWorkflowRun {
+  param(
+    [Parameter(Mandatory)][long]$RunId,
+    [int]$TimeoutSeconds = 600,
+    [scriptblock]$Native
+  )
+
+  $arguments = @('run', 'watch', [string]$RunId, '--exit-status', '--repo', $script:ExpectedRepoSlug)
+  if ($null -eq $Native) {
+    [void](Invoke-CheckedNative -FilePath 'gh' -Arguments $arguments -TimeoutSeconds $TimeoutSeconds)
+  } else {
+    [void](& $Native 'gh' $arguments $TimeoutSeconds)
+  }
+}
+
+function Get-PagesWorkflowRun {
+  param(
+    [Parameter(Mandatory)][long]$RunId,
+    [int]$TimeoutSeconds = 60,
+    [scriptblock]$Native
+  )
+
+  $arguments = @(
+    'run', 'view', [string]$RunId,
+    '--repo', $script:ExpectedRepoSlug,
+    '--json', 'databaseId,headSha,status,conclusion,url,event,jobs'
+  )
+  $result = if ($null -eq $Native) {
+    Invoke-CheckedNative -FilePath 'gh' -Arguments $arguments -TimeoutSeconds $TimeoutSeconds
+  } else {
+    & $Native 'gh' $arguments $TimeoutSeconds
+  }
+  if (-not $result.StdOut.Trim()) { throw "Pages run $RunId returned no JSON." }
+  return $result.StdOut | ConvertFrom-Json
+}
+
 function Assert-SuccessfulPagesRun {
-  param([Parameter(Mandatory)][object]$Run, [Parameter(Mandatory)][string]$Head)
+  param(
+    [Parameter(Mandatory)][object]$Run,
+    [Parameter(Mandatory)][string]$Head,
+    [Parameter(Mandatory)][long]$RunId
+  )
 
   if ($Run.headSha -ne $Head) { throw "Pages run HEAD '$($Run.headSha)' does not equal local HEAD '$Head'." }
+  if ([long]$Run.databaseId -ne $RunId) {
+    throw "Pages run database id '$($Run.databaseId)' does not equal selected run id '$RunId'."
+  }
+  $canonicalPrefix = "https://github.com/$($script:ExpectedRepoSlug)/actions/runs/"
+  if (-not ([string]$Run.url).StartsWith($canonicalPrefix, [StringComparison]::Ordinal)) {
+    throw "Pages run URL '$($Run.url)' is outside canonical repository $($script:ExpectedRepoSlug)."
+  }
+  $urlSuffix = ([string]$Run.url).Substring($canonicalPrefix.Length)
+  $urlIdText = ($urlSuffix -split '/', 2)[0]
+  $urlId = 0L
+  if (-not [long]::TryParse($urlIdText, [ref]$urlId) -or $urlId -ne $RunId) {
+    throw "Pages run URL id '$urlIdText' does not equal selected run id '$RunId'."
+  }
   if ($Run.event -ne 'push') { throw "Pages run event '$($Run.event)' is not push." }
   if ($Run.status -ne 'completed' -or $Run.conclusion -ne 'success') {
     throw "Pages run for HEAD $Head is $($Run.status)/$($Run.conclusion)."
@@ -797,6 +925,17 @@ function Assert-SuccessfulPagesRun {
   }
 }
 
+function Get-RemainingWholeSeconds {
+  param(
+    [Parameter(Mandatory)][DateTimeOffset]$Deadline,
+    [Parameter(Mandatory)][string]$Operation
+  )
+
+  $remaining = [int][Math]::Floor(($Deadline - [DateTimeOffset]::UtcNow).TotalSeconds)
+  if ($remaining -le 0) { throw "Timed out before $Operation." }
+  return $remaining
+}
+
 function Wait-ExactHeadRun {
   param(
     [Parameter(Mandatory)][string]$Head,
@@ -806,34 +945,38 @@ function Wait-ExactHeadRun {
 
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
   $lastState = 'no matching push run observed'
-  do {
-    $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+  while ($true) {
+    $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run list for HEAD $Head"
     $runs = @(& $Adapters['RunList'] $remainingSeconds)
+    [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run list for HEAD $Head")
     $run = Select-ExactHeadRun -Runs $runs -Head $Head
     if ($null -ne $run) {
       $lastState = "id=$($run.databaseId) $($run.status)/$($run.conclusion)"
       try {
-        $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+        $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run watch for HEAD $Head"
         & $Adapters['WatchRun'] $run.databaseId $remainingSeconds
+        [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run watch for HEAD $Head")
       } catch {
         throw "Pages run watch failed or timed out for HEAD $Head; last state: $lastState. $($_.Exception.Message)"
       }
-      $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+      $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run view for HEAD $Head"
       $completeRun = & $Adapters['RunView'] $run.databaseId $remainingSeconds
-      Assert-SuccessfulPagesRun -Run $completeRun -Head $Head
+      [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run view for HEAD $Head")
+      Assert-SuccessfulPagesRun -Run $completeRun -Head $Head -RunId ([long]$run.databaseId)
       return $completeRun
     }
-    if ([DateTimeOffset]::UtcNow -ge $deadline) { break }
-    & $Adapters['Sleep'] 2
-  } while ([DateTimeOffset]::UtcNow -lt $deadline)
-  throw "Timed out after $TimeoutSeconds seconds waiting for Pages run for HEAD $Head; last state: $lastState."
+    $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run retry sleep for HEAD $Head"
+    & $Adapters['Sleep'] ([Math]::Min(2, $remainingSeconds))
+    [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "Pages run retry sleep for HEAD $Head")
+  }
 }
 
 function Get-LiveSourceBytes {
   param([Parameter(Mandatory)][string]$Url, [int]$TimeoutSeconds = 15)
 
+  if ($TimeoutSeconds -le 0) { throw 'Live source fetch requires a positive timeout.' }
   $client = [Net.Http.HttpClient]::new()
-  $client.Timeout = [TimeSpan]::FromSeconds([Math]::Max(1, [Math]::Min(15, $TimeoutSeconds)))
+  $client.Timeout = [TimeSpan]::FromSeconds([Math]::Min(15, $TimeoutSeconds))
   try {
     return $client.GetByteArrayAsync($Url).GetAwaiter().GetResult()
   } finally {
@@ -853,10 +996,11 @@ function Wait-LiveSourceMatch {
   $localHashText = [Convert]::ToHexString($localHash)
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
   $lastProblem = 'live source was not fetched'
-  do {
+  while ($true) {
     try {
-      $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+      $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "live source fetch at $LiveUrl"
       $liveBytes = [byte[]](& $Adapters['LiveSource'] $LiveUrl $remainingSeconds)
+      [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "live source fetch at $LiveUrl")
       $liveHashText = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($liveBytes))
       if ($liveHashText -eq $localHashText) {
         return [pscustomobject]@{ Match = $true; Hash = $localHashText; Url = $LiveUrl }
@@ -865,10 +1009,18 @@ function Wait-LiveSourceMatch {
     } catch {
       $lastProblem = $_.Exception.Message
     }
-    if ([DateTimeOffset]::UtcNow -ge $deadline) { break }
-    & $Adapters['Sleep'] 2
-  } while ([DateTimeOffset]::UtcNow -lt $deadline)
-  throw "Live source SHA-256 did not match within $TimeoutSeconds seconds at $LiveUrl; $lastProblem."
+    try {
+      $remainingSeconds = Get-RemainingWholeSeconds -Deadline $deadline -Operation "live source retry sleep at $LiveUrl"
+    } catch {
+      throw "Live source SHA-256 did not match within $TimeoutSeconds seconds at $LiveUrl; $lastProblem. $($_.Exception.Message)"
+    }
+    & $Adapters['Sleep'] ([Math]::Min(2, $remainingSeconds))
+    try {
+      [void](Get-RemainingWholeSeconds -Deadline $deadline -Operation "live source retry sleep at $LiveUrl")
+    } catch {
+      throw "Live source SHA-256 did not match within $TimeoutSeconds seconds at $LiveUrl; $lastProblem. $($_.Exception.Message)"
+    }
+  }
 }
 
 function New-DeploymentAdapters {
@@ -876,6 +1028,7 @@ function New-DeploymentAdapters {
 
   $defaults = @{
     GetRepositoryContext = { Get-RepositoryContext -Repo $script:RepoRoot }
+    GetRepositoryState = { Get-RepositoryState -Repo $script:RepoRoot }
     StartLocalSite = { Start-LocalSiteServer -Repo $script:RepoRoot }
     StopLocalSite = { param($site) Stop-OwnedProcess -Process $site.Process -Label 'local HTTP server' }
     Browser = { param($url, $version, $date) Invoke-ChromeSelfTest -Url $url -ExpectedVersion $version -ExpectedDate $date }
@@ -889,16 +1042,15 @@ function New-DeploymentAdapters {
     }
     RunList = {
       param($timeoutSeconds)
-      return @(Get-PagesWorkflowRuns -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds))))
+      return @(Get-PagesWorkflowRuns -TimeoutSeconds ([Math]::Min(60, $timeoutSeconds)))
     }
     WatchRun = {
       param($id, $timeoutSeconds)
-      [void](Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'watch', [string]$id, '--exit-status') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(600, $timeoutSeconds))))
+      Watch-PagesWorkflowRun -RunId $id -TimeoutSeconds ([Math]::Min(600, $timeoutSeconds))
     }
     RunView = {
       param($id, $timeoutSeconds)
-      $json = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'view', [string]$id, '--json', 'databaseId,headSha,status,conclusion,url,event,jobs') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds)))).StdOut
-      return $json | ConvertFrom-Json
+      return Get-PagesWorkflowRun -RunId $id -TimeoutSeconds ([Math]::Min(60, $timeoutSeconds))
     }
     LocalSource = { [IO.File]::ReadAllBytes((Join-Path $script:RepoRoot 'index.html')) }
     LiveSource = { param($url, $timeoutSeconds) Get-LiveSourceBytes -Url $url -TimeoutSeconds $timeoutSeconds }
@@ -973,8 +1125,9 @@ function Invoke-Mk2mdDeployment {
   [void](Wait-LiveSourceMatch -LiveUrl $liveUrl -LocalBytes $localBytes -Adapters $activeAdapters -TimeoutSeconds 300)
   $liveBrowser = & $activeAdapters['Browser'] $liveUrl $context.Version $context.Date
   Assert-BrowserResult -Result $liveBrowser -Version $context.Version -Date $context.Date
-  $afterSnapshot = & $activeAdapters['ProtectedSnapshot']
-  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After $afterSnapshot
+  $finalState = & $activeAdapters['GetRepositoryState']
+  Assert-ExactRepositoryState -Initial $context -Final $finalState
+  $afterSnapshot = $finalState.ProtectedHashes
 
   return [pscustomobject]@{
     Version = $context.Version
