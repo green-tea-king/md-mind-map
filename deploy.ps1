@@ -11,6 +11,9 @@ $script:RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:ExpectedRepoSlug = 'green-tea-king/md-mind-map'
 $script:ExpectedBranch = 'master'
 $script:LiveUrl = 'https://green-tea-king.github.io/md-mind-map/'
+$script:CdpConnectTimeoutSeconds = 10
+$script:CdpCloseTimeoutSeconds = 2
+$script:CdpSettleMilliseconds = 1000
 $script:ProtectedUntracked = @(
   'BACKUP_MANIFEST.md',
   'MD心智圖_v10_00.html',
@@ -361,7 +364,19 @@ function Invoke-ChromeSelfTest {
     }
     if (-not $target.webSocketDebuggerUrl) { throw 'Chrome did not return a page CDP WebSocket URL.' }
 
-    [void]$socket.ConnectAsync([uri]$target.webSocketDebuggerUrl, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    $connectCancellation = [Threading.CancellationTokenSource]::new(
+      [TimeSpan]::FromSeconds($script:CdpConnectTimeoutSeconds)
+    )
+    try {
+      [void]$socket.ConnectAsync(
+        [uri]$target.webSocketDebuggerUrl,
+        $connectCancellation.Token
+      ).GetAwaiter().GetResult()
+    } catch [OperationCanceledException] {
+      throw "Chrome CDP WebSocket connect timed out after $($script:CdpConnectTimeoutSeconds) seconds."
+    } finally {
+      $connectCancellation.Dispose()
+    }
     $events = [Collections.ArrayList]::new()
     [void](Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.enable' -Params @{} -EventSink $events)
     [void](Invoke-CdpCommand -WebSocket $socket -Method 'Log.enable' -Params @{} -EventSink $events)
@@ -404,6 +419,18 @@ JSON.stringify({
       throw "Chrome self-test did not finish within 90 seconds for MK2MD v$ExpectedVersion ($ExpectedDate)."
     }
 
+    $settleDeadline = [DateTime]::UtcNow.AddMilliseconds($script:CdpSettleMilliseconds)
+    do {
+      Start-Sleep -Milliseconds 100
+      $evaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+        expression = $expression
+        returnByValue = $true
+      } -EventSink $events -TimeoutSeconds 2
+      $value = $evaluation.result.result.value
+      if (-not $value) { throw 'Chrome returned no DOM state during the CDP settle window.' }
+      $dom = $value | ConvertFrom-Json
+    } while ([DateTime]::UtcNow -lt $settleDeadline)
+
     $consoleErrors = [Collections.Generic.List[string]]::new()
     $pageErrors = [Collections.Generic.List[string]]::new()
     $warnings = [Collections.Generic.List[string]]::new()
@@ -443,20 +470,32 @@ JSON.stringify({
       Warnings = @($warnings)
     }
   } finally {
+    $closeFailure = ''
     if ($socket.State -eq [Net.WebSockets.WebSocketState]::Open) {
+      $closeCancellation = [Threading.CancellationTokenSource]::new(
+        [TimeSpan]::FromSeconds($script:CdpCloseTimeoutSeconds)
+      )
       try {
         [void]$socket.CloseAsync(
           [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
           'complete',
-          [Threading.CancellationToken]::None
+          $closeCancellation.Token
         ).GetAwaiter().GetResult()
+      } catch [OperationCanceledException] {
+        $closeFailure = "Chrome CDP WebSocket close timed out after $($script:CdpCloseTimeoutSeconds) seconds."
+        $socket.Abort()
       } catch {
+        $closeFailure = "Chrome CDP WebSocket close failed: $($_.Exception.Message)"
+        $socket.Abort()
+      } finally {
+        $closeCancellation.Dispose()
       }
     }
     $socket.Dispose()
     $client.Dispose()
     $handler.Dispose()
     Stop-OwnedProcess -Process $chrome -Label 'headless Chrome'
+    if ($closeFailure) { throw $closeFailure }
   }
 }
 

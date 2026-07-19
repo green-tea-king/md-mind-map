@@ -29,9 +29,14 @@ Test-Case 'deployment source has no staging or commit commands' {
 Test-Case 'deployment source has no force or deletion commands' {
   Assert-True ($source -notmatch '(?i)--force|\bRemove-Item\b|\bdel\b') 'unsafe command remains'
 }
-Test-Case 'deployment source exposes dry-run and exact-head contracts' {
+Test-Case 'deployment source exposes dry-run exact-head and bounded CDP contracts' {
   Assert-True ($source.Contains('[switch]$DryRun')) 'DryRun is missing'
   Assert-True ($source.Contains('[string]$ExpectedHead')) 'ExpectedHead is missing'
+  Assert-True ($source.Contains('$script:CdpConnectTimeoutSeconds = 10')) 'CDP connect timeout contract is missing'
+  Assert-True ($source.Contains('$script:CdpCloseTimeoutSeconds = 2')) 'CDP close timeout contract is missing'
+  Assert-True ($source -notmatch '(?s)ConnectAsync\(.{0,250}\[Threading\.CancellationToken\]::None') 'CDP connect is unbounded'
+  Assert-True ($source -notmatch '(?s)CloseAsync\(.{0,350}\[Threading\.CancellationToken\]::None') 'CDP close is unbounded'
+  Assert-True ($source.Contains('$socket.Abort()')) 'CDP close timeout does not abort the socket'
 }
 
 $dotSourceOutput = @(. $deployPath)
@@ -45,6 +50,13 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Assert-ProtectedSnapshot',
     'Resolve-RemoteRelation',
     'Assert-ExpectedHead',
+    'Get-FreeLoopbackPort',
+    'Start-LocalSiteServer',
+    'Stop-OwnedProcess',
+    'Receive-CdpMessage',
+    'Invoke-CdpCommand',
+    'Invoke-ChromeSelfTest',
+    'Assert-BrowserResult',
     'Invoke-Mk2mdDeployment'
   )
   foreach ($name in $requiredFunctions) {
@@ -113,7 +125,9 @@ $goodBrowser = [pscustomobject]@{
   Passed = 11; Failed = 0; ConsoleErrors = @(); PageErrors = @(); Warnings = @(1,2,3,4,5,6)
 }
 
-Test-Case 'browser result accepts the current clean baseline' {
+Test-Case 'browser result accepts the current clean baseline after bounded settle' {
+  Assert-True ($source.Contains('$script:CdpSettleMilliseconds = 1000')) 'bounded CDP settle contract is missing'
+  Assert-True ($source.Contains('$settleDeadline')) 'CDP event settle loop is missing'
   Assert-BrowserResult -Result $goodBrowser -Version '10.77' -Date '2026-07-17'
 }
 
