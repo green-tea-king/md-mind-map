@@ -520,7 +520,7 @@ $afterRemote = ((git ls-remote origin refs/heads/master) -split '\s+')[0]
 if ($beforeHead -ne $afterHead -or $beforeRemote -ne $afterRemote) { throw 'DryRun changed Git state' }
 ```
 
-Expected: `28/28`; dry-run local Chrome 11/11/errors 0/warnings 6; no push, new Actions run, commit, staged file, browser session, listener, or protected hash change.
+Expected: `33/33`; dry-run local Chrome 11/11/errors 0/warnings 6; no push, new Actions run, commit, staged file, browser session, listener, or protected hash change.
 
 - [ ] **Step 8: Commit Task 3**
 
@@ -548,7 +548,7 @@ Expected: exactly two staged files; no push.
 - Test: `scripts/test-deploy.ps1`
 
 **Interfaces:**
-- Consumes: completed tracked deployment tool and its 28/28 contract suite.
+- Consumes: completed tracked deployment tool and its 33/33 contract suite.
 - Produces: v10.78/2026-07-19 repository sources, new README deploy block, version checker support for the block, and Pages CI execution of the deployment contract.
 
 - [ ] **Step 1: Add RED version-checker cases for the new README CLI**
@@ -674,15 +674,9 @@ Extract the one inline app script after the header comment and compile it with `
 5. browser gate
 6. upload artifact
 
-Expected: deployment `28/28`, version checker `12/12`, repository gate `v10.78 (2026-07-19)`, all syntax checks pass, one inline script, and workflow artifact commands remain only `cp index.html` plus `.nojekyll`.
+Expected: deployment `33/33`, version checker `12/12`, repository gate `v10.78 (2026-07-19)`, all syntax checks pass, one inline script, and workflow artifact commands remain only `cp index.html` plus `.nojekyll`.
 
-- [ ] **Step 8: Run installed-Chrome local v10.78 gate**
-
-Run `.\deploy.ps1 -DryRun` from the repository.
-
-Expected: title `MK2MD v10.78`, brand `MK2MD`, version/date `v10.78 · 2026-07-19`, 11/11, failed 0, console/page errors 0, warnings 6; no push or Actions wait.
-
-- [ ] **Step 9: Review exact release scope and commit**
+- [ ] **Step 8: Review exact release scope and commit**
 
 Require the implementation range from `b695f81` to contain only the plan plus these approved paths:
 
@@ -711,6 +705,12 @@ git commit -m "Release v10.78 safe deployment tool"
 
 Do not push yet.
 
+- [ ] **Step 9: Run installed-Chrome local v10.78 gate from the committed release**
+
+Run `.\deploy.ps1 -DryRun` from the clean repository after the Task 4 commit.
+
+Expected: title `MK2MD v10.78`, brand `MK2MD`, version/date `v10.78 · 2026-07-19`, 11/11, failed 0, console/page errors 0, warnings 6; no push or Actions wait. If this post-commit DryRun fails, fix it in a new commit rather than amending the reviewed release commit.
+
 ---
 
 ### Task 5: Final review, dry-run proof, original Pages deployment, and live verification
@@ -735,7 +735,7 @@ git diff --check 3850b36ccd2918bbdaff8de1b546254fa253cd54..HEAD
 git status --short --branch
 ```
 
-Expected: 28/28, 12/12, v10.78 gate, local 11/11/errors 0/warnings 6, tracked/index clean, exact six untracked paths/hashes, no browser/listener, and remote still at the v10.77 base.
+Expected: 33/33, 12/12, v10.78 gate, local 11/11/errors 0/warnings 6, tracked/index clean, exact six untracked paths/hashes, no browser/listener, and remote still at the v10.77 base.
 
 - [ ] **Step 2: Perform final fixed-range code review**
 
@@ -783,7 +783,7 @@ Report in Taiwan Traditional Chinese, with the key result first, then:
 1. work completed.
 2. files changed.
 3. version `v10.78` and release SHA.
-4. 28/28, 12/12, version gate, syntax, dry-run, local/live 11/11 results.
+4. 33/33, 12/12, version gate, syntax, dry-run, local/live 11/11 results.
 5. deployed yes/no.
 6. original live URL, exact Actions URL/id, SHA, push/deploy/live verification times in Asia/Taipei.
 7. remaining risk or user action.
