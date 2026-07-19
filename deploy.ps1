@@ -214,12 +214,21 @@ function Start-LocalSiteServer {
 function Receive-CdpMessage {
   param(
     [Parameter(Mandatory)][Net.WebSockets.ClientWebSocket]$WebSocket,
-    [int]$TimeoutSeconds = 10
+    [int]$TimeoutSeconds = 10,
+    [int]$TimeoutMilliseconds = 0
   )
 
+  $effectiveTimeoutMilliseconds = if ($PSBoundParameters.ContainsKey('TimeoutMilliseconds')) {
+    $TimeoutMilliseconds
+  } else {
+    $TimeoutSeconds * 1000
+  }
+  if ($effectiveTimeoutMilliseconds -le 0) { throw 'CDP receive timeout must be positive.' }
   $buffer = [byte[]]::new(65536)
   $stream = [IO.MemoryStream]::new()
-  $cancellation = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($TimeoutSeconds))
+  $cancellation = [Threading.CancellationTokenSource]::new(
+    [TimeSpan]::FromMilliseconds($effectiveTimeoutMilliseconds)
+  )
   try {
     do {
       $segment = [ArraySegment[byte]]::new($buffer)
@@ -232,10 +241,45 @@ function Receive-CdpMessage {
     $json = [Text.Encoding]::UTF8.GetString($stream.ToArray())
     return ($json | ConvertFrom-Json -Depth 30)
   } catch [OperationCanceledException] {
-    throw "Timed out waiting $TimeoutSeconds seconds for a CDP message."
+    throw "Timed out waiting $effectiveTimeoutMilliseconds milliseconds for a CDP message."
   } finally {
     $cancellation.Dispose()
     $stream.Dispose()
+  }
+}
+
+function Wait-CdpCommandResponse {
+  param(
+    [Parameter(Mandatory)][int64]$Id,
+    [Parameter(Mandatory)][string]$Method,
+    [Parameter(Mandatory)][DateTime]$DeadlineUtc,
+    [Collections.IList]$EventSink = $null,
+    [Parameter(Mandatory)][scriptblock]$ReceiveMessage
+  )
+
+  while ($true) {
+    $remainingMilliseconds = [int][Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds)
+    if ($remainingMilliseconds -le 0) {
+      throw "CDP command exceeded its total deadline: $Method"
+    }
+    try {
+      $incoming = & $ReceiveMessage $remainingMilliseconds
+    } catch {
+      if ([DateTime]::UtcNow -ge $DeadlineUtc) {
+        throw "CDP command exceeded its total deadline: $Method"
+      }
+      throw
+    }
+    if ($incoming.PSObject.Properties.Name -contains 'method') {
+      if ($null -ne $EventSink) { [void]$EventSink.Add($incoming) }
+      continue
+    }
+    if (($incoming.PSObject.Properties.Name -contains 'id') -and [int64]$incoming.id -eq $Id) {
+      if ($incoming.PSObject.Properties.Name -contains 'error') {
+        throw "CDP command failed ($Method): $($incoming.error | ConvertTo-Json -Compress -Depth 10)"
+      }
+      return $incoming
+    }
   }
 }
 
@@ -248,6 +292,8 @@ function Invoke-CdpCommand {
     [int]$TimeoutSeconds = 10
   )
 
+  if ($TimeoutSeconds -le 0) { throw 'CDP command timeout must be positive.' }
+  $deadlineUtc = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
   if ($null -eq (Get-Variable CdpNextId -Scope Script -ErrorAction SilentlyContinue)) {
     $script:CdpNextId = 0
   }
@@ -256,7 +302,11 @@ function Invoke-CdpCommand {
   $message = [ordered]@{ id = $id; method = $Method }
   if ($null -ne $Params) { $message.params = $Params }
   $bytes = [Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Compress -Depth 30))
-  $cancellation = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($TimeoutSeconds))
+  $sendRemainingMilliseconds = [int][Math]::Ceiling(($deadlineUtc - [DateTime]::UtcNow).TotalMilliseconds)
+  if ($sendRemainingMilliseconds -le 0) { throw "CDP command exceeded its total deadline: $Method" }
+  $cancellation = [Threading.CancellationTokenSource]::new(
+    [TimeSpan]::FromMilliseconds($sendRemainingMilliseconds)
+  )
   try {
     $segment = [ArraySegment[byte]]::new($bytes)
     [void]$WebSocket.SendAsync(
@@ -266,24 +316,17 @@ function Invoke-CdpCommand {
       $cancellation.Token
     ).GetAwaiter().GetResult()
   } catch [OperationCanceledException] {
-    throw "Timed out sending CDP command: $Method"
+    throw "CDP command exceeded its total deadline while sending: $Method"
   } finally {
     $cancellation.Dispose()
   }
 
-  while ($true) {
-    $incoming = Receive-CdpMessage -WebSocket $WebSocket -TimeoutSeconds $TimeoutSeconds
-    if ($incoming.PSObject.Properties.Name -contains 'method') {
-      if ($null -ne $EventSink) { [void]$EventSink.Add($incoming) }
-      continue
-    }
-    if (($incoming.PSObject.Properties.Name -contains 'id') -and [int64]$incoming.id -eq $id) {
-      if ($incoming.PSObject.Properties.Name -contains 'error') {
-        throw "CDP command failed ($Method): $($incoming.error | ConvertTo-Json -Compress -Depth 10)"
-      }
-      return $incoming
-    }
-  }
+  $receiveMessage = {
+    param([int]$RemainingMilliseconds)
+    Receive-CdpMessage -WebSocket $WebSocket -TimeoutMilliseconds $RemainingMilliseconds
+  }.GetNewClosure()
+  return Wait-CdpCommandResponse -Id $id -Method $Method -DeadlineUtc $deadlineUtc `
+    -EventSink $EventSink -ReceiveMessage $receiveMessage
 }
 
 function Invoke-ChromeSelfTest {

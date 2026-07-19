@@ -79,6 +79,28 @@ Test-Case 'checked native failure and timeout throw' {
   Assert-True $timeoutThrew 'native timeout did not throw the timeout contract'
 }
 
+Test-Case 'CDP command total deadline bounds an event flood' {
+  $events = [Collections.ArrayList]::new()
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  $threw = $false
+  try {
+    Wait-CdpCommandResponse -Id 42 -Method 'Runtime.evaluate' `
+      -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(120)) -EventSink $events `
+      -ReceiveMessage {
+        param([int]$RemainingMilliseconds)
+        Start-Sleep -Milliseconds ([Math]::Min(5, [Math]::Max(1, $RemainingMilliseconds)))
+        [pscustomobject]@{ method = 'Runtime.consoleAPICalled'; params = @{ type = 'log' } }
+      }
+  } catch {
+    $threw = $_.Exception.Message -match 'total deadline'
+  } finally {
+    $stopwatch.Stop()
+  }
+  Assert-True $threw 'event flood did not hit the CDP command total deadline'
+  Assert-True ($events.Count -gt 0) 'event flood was not simulated'
+  Assert-True ($stopwatch.ElapsedMilliseconds -lt 1000) 'event flood timeout was not bounded'
+}
+
 Test-Case 'remote relation matrix is stable' {
   Assert-True ((Resolve-RemoteRelation 'a' 'a' $false $false) -eq 'equal') 'equal failed'
   Assert-True ((Resolve-RemoteRelation 'b' 'a' $true $false) -eq 'local-ahead') 'local-ahead failed'
