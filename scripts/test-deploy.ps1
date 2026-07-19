@@ -100,6 +100,23 @@ Test-Case 'checked native failure and timeout throw' {
   Assert-True $timeoutThrew 'native timeout did not throw the timeout contract'
 }
 
+Test-Case 'native timeout cleanup is bounded when child output streams never close' {
+  $pwshPath = (Get-Command pwsh -ErrorAction Stop).Source
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  $threw = $false
+  try {
+    Invoke-CheckedNative -FilePath $pwshPath -Arguments @('-NoProfile', '-Command',
+      '[Console]::Write("stdout"); [Console]::Error.Write("stderr"); Start-Sleep -Seconds 30') -TimeoutSeconds 1
+  } catch {
+    $threw = $_.Exception.Message -match 'timed out after 1 seconds'
+  } finally {
+    $stopwatch.Stop()
+  }
+  Assert-True $threw 'native output-hang fixture did not preserve the timeout exception'
+  Assert-True ($stopwatch.ElapsedMilliseconds -lt 5000) `
+    "native timeout cleanup exceeded its bounded budget: $($stopwatch.ElapsedMilliseconds)ms"
+}
+
 Test-Case 'CDP command total deadline bounds an event flood' {
   $events = [Collections.ArrayList]::new()
   $stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -136,6 +153,23 @@ Test-Case 'CDP command rejects a matching response returned after its total dead
     $threw = $_.Exception.Message -match 'total deadline'
   }
   Assert-True $threw 'late matching CDP response was accepted'
+}
+
+Test-Case 'DOM self-test loop pins every command and sleep to its 90-second deadline' {
+  Assert-True ($source -match '(?s)\$deadline = \[DateTime\]::UtcNow\.AddSeconds\(90\).{0,1200}-DeadlineUtc \$deadline') `
+    '90-second DOM loop does not pass its deadline into CDP commands'
+  Assert-True ($source -match '(?s)while \(\[DateTime\]::UtcNow -lt \$deadline\).*?Start-Sleep -Milliseconds \(\[Math\]::Min\(250,') `
+    '90-second DOM loop sleep is not bounded by remaining milliseconds'
+}
+
+Test-Case 'deadline helper rejects zero-budget waits before invoking adapters' {
+  Assert-True ([bool](Get-Command Get-RemainingMilliseconds -ErrorAction SilentlyContinue)) `
+    'remaining-milliseconds deadline helper is missing'
+  $threw = $false
+  try { Get-RemainingMilliseconds -DeadlineUtc ([DateTime]::UtcNow.AddMilliseconds(-1)) -Operation 'zero-budget fixture' } catch {
+    $threw = $_.Exception.Message -match 'zero-budget fixture'
+  }
+  Assert-True $threw 'expired deadline did not reject a zero-budget wait'
 }
 
 Test-Case 'remote relation matrix is stable' {

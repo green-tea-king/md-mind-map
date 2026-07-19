@@ -25,6 +25,16 @@ $script:ProtectedUntracked = @(
   'repository-history.bundle'
 )
 
+function Get-RemainingMilliseconds {
+  param(
+    [Parameter(Mandatory)][DateTime]$DeadlineUtc,
+    [Parameter(Mandatory)][string]$Operation
+  )
+  $remaining = [int64][Math]::Floor(($DeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds)
+  if ($remaining -le 0) { throw [TimeoutException]::new("$Operation exceeded its total deadline.") }
+  return [int][Math]::Min([int]::MaxValue, $remaining)
+}
+
 function Invoke-CheckedNative {
   [CmdletBinding()]
   param(
@@ -46,14 +56,40 @@ function Invoke-CheckedNative {
   [void]$process.Start()
   $stdoutTask = $process.StandardOutput.ReadToEndAsync()
   $stderrTask = $process.StandardError.ReadToEndAsync()
-  if ($TimeoutSeconds -gt 0 -and -not $process.WaitForExit($TimeoutSeconds * 1000)) {
-    $process.Kill($true)
-    $process.WaitForExit()
-    throw "Native command timed out after $TimeoutSeconds seconds: $FilePath $($Arguments -join ' ')"
+  $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+  $timedOut = $false
+  try {
+    if ($TimeoutSeconds -gt 0) {
+      $timedOut = -not $process.WaitForExit((Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation "Native command $FilePath"))
+    } else {
+      $process.WaitForExit()
+    }
+  } catch [TimeoutException] { $timedOut = $true }
+  if ($timedOut) {
+    $primary = [TimeoutException]::new("Native command timed out after $TimeoutSeconds seconds: $FilePath $($Arguments -join ' ')")
+    $process | Add-Member -NotePropertyName Mk2mdStdOutTask -NotePropertyValue $stdoutTask -Force
+    $process | Add-Member -NotePropertyName Mk2mdStdErrTask -NotePropertyValue $stderrTask -Force
+    try { Stop-OwnedProcess -Process $process -Label "native command $FilePath" -DeadlineUtc $deadline } catch {
+      $primary.Data['CleanupFailures'] = $_.Exception.Message
+    }
+    throw $primary
   }
-  if ($TimeoutSeconds -le 0) { $process.WaitForExit() }
-  $stdout = $stdoutTask.GetAwaiter().GetResult()
-  $stderr = $stderrTask.GetAwaiter().GetResult()
+  try {
+    if (-not $stdoutTask.Wait((Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation "Native stdout $FilePath"))) {
+      throw [TimeoutException]::new("Native stdout timed out: $FilePath")
+    }
+    if (-not $stderrTask.Wait((Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation "Native stderr $FilePath"))) {
+      throw [TimeoutException]::new("Native stderr timed out: $FilePath")
+    }
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+  } catch [TimeoutException] {
+    $primary = $_.Exception
+    try { Stop-OwnedProcess -Process $process -Label "native command $FilePath" -DeadlineUtc $deadline } catch {
+      $primary.Data['CleanupFailures'] = $_.Exception.Message
+    }
+    throw $primary
+  }
   $result = [pscustomobject]@{ ExitCode = $process.ExitCode; StdOut = $stdout; StdErr = $stderr }
   if ($result.ExitCode -notin $AllowedExitCodes) {
     throw "Native command failed ($($result.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
@@ -283,24 +319,36 @@ function Throw-ChromeFailure {
 function Stop-OwnedProcess {
   param(
     [Parameter(Mandatory)][Diagnostics.Process]$Process,
-    [Parameter(Mandatory)][string]$Label
+    [Parameter(Mandatory)][string]$Label,
+    [DateTime]$DeadlineUtc = [DateTime]::UtcNow.AddSeconds(10)
   )
 
   $portProperty = $Process.PSObject.Properties['Mk2mdOwnedPort']
   $ownedPort = if ($null -ne $portProperty) { [int]$portProperty.Value } else { 0 }
-  $Process.Refresh()
-  if (-not $Process.HasExited) {
-    $Process.Kill($true)
-    if (-not $Process.WaitForExit(10000)) {
-      throw "Timed out stopping $Label process $($Process.Id)."
+  $cleanupFailures = [Collections.Generic.List[string]]::new()
+  try {
+    $Process.Refresh()
+    if (-not $Process.HasExited) {
+      $Process.Kill($true)
+      $remaining = Get-RemainingMilliseconds -DeadlineUtc $DeadlineUtc -Operation "Stopping $Label process"
+      if (-not $Process.WaitForExit($remaining)) {
+        throw "Timed out stopping $Label process $($Process.Id)."
+      }
+    } else {
+      $remaining = Get-RemainingMilliseconds -DeadlineUtc $DeadlineUtc -Operation "Waiting for $Label process"
+      if (-not $Process.WaitForExit($remaining)) { throw "Timed out waiting for $Label process $($Process.Id)." }
     }
-  } else {
-    $Process.WaitForExit()
-  }
+  } catch { $cleanupFailures.Add($_.Exception.Message) }
 
   foreach ($taskName in @('Mk2mdStdOutTask', 'Mk2mdStdErrTask')) {
     $taskProperty = $Process.PSObject.Properties[$taskName]
-    if ($null -ne $taskProperty) { [void]$taskProperty.Value.GetAwaiter().GetResult() }
+    if ($null -ne $taskProperty) {
+      try {
+        $remaining = Get-RemainingMilliseconds -DeadlineUtc $DeadlineUtc -Operation "$Label $taskName"
+        if (-not $taskProperty.Value.Wait($remaining)) { throw "$Label $taskName did not finish before cleanup deadline." }
+        [void]$taskProperty.Value.GetAwaiter().GetResult()
+      } catch { $cleanupFailures.Add($_.Exception.Message) }
+    }
   }
 
   if ($ownedPort -gt 0) {
@@ -311,10 +359,14 @@ function Stop-OwnedProcess {
         $released = $true
         break
       }
-      Start-Sleep -Milliseconds 100
+      try {
+        $remaining = Get-RemainingMilliseconds -DeadlineUtc $DeadlineUtc -Operation "$Label port cleanup"
+        Start-Sleep -Milliseconds ([Math]::Min(100, $remaining))
+      } catch { $cleanupFailures.Add($_.Exception.Message); break }
     }
-    if (-not $released) { throw "$Label stopped, but port $ownedPort still has a listener." }
+    if (-not $released) { $cleanupFailures.Add("$Label stopped, but port $ownedPort still has a listener.") }
   }
+  if ($cleanupFailures.Count -gt 0) { throw ($cleanupFailures -join '; ') }
 }
 
 function Start-LocalSiteServer {
@@ -624,18 +676,21 @@ JSON.stringify({
         $evaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
           expression = $expression
           returnByValue = $true
-        } -EventSink $events
+        } -EventSink $events -DeadlineUtc $deadline
       } catch {
         if ($_.Exception.Message -notmatch 'Inspected target navigated or closed') { throw }
-        Start-Sleep -Milliseconds 250
+        $remainingMilliseconds = Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation 'Chrome self-test DOM loop'
+        Start-Sleep -Milliseconds ([Math]::Min(250, $remainingMilliseconds))
         continue
       }
+      [void](Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation 'Chrome self-test DOM loop')
       $value = $evaluation.result.result.value
       if ($value) {
         $dom = $value | ConvertFrom-Json
         if ($dom.selfTest -in @('pass', 'fail')) { break }
       }
-      Start-Sleep -Milliseconds 250
+      $remainingMilliseconds = Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation 'Chrome self-test DOM loop'
+      Start-Sleep -Milliseconds ([Math]::Min(250, $remainingMilliseconds))
     }
     if ($null -eq $dom -or $dom.selfTest -notin @('pass', 'fail')) {
       throw "Chrome self-test did not finish within 90 seconds for MK2MD v$ExpectedVersion ($ExpectedDate)."
