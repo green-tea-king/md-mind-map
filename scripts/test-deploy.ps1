@@ -39,7 +39,8 @@ Test-Case 'deployment source exposes dry-run exact-head and bounded CDP contract
   Assert-True ($source -notmatch '(?s)CloseAsync\(.{0,350}\[Threading\.CancellationToken\]::None') 'CDP close is unbounded'
   Assert-True ($source.Contains('$socket.Abort()')) 'CDP close timeout does not abort the socket'
   Assert-True ($source -notmatch '(?s)\$receiveMessage\s*=\s*\{.{0,300}\}\.GetNewClosure\(\)') 'CDP receive helper is isolated from script-scope functions'
-  Assert-True ($source.Contains('throw "Local HEAD changed before push')) 'push adapter does not recheck the exact HEAD immediately before push'
+  Assert-True ($source.Contains('Invoke-ExactHeadPush -Initial $context')) `
+    'production push adapter does not use the exact pre-push barrier'
 }
 
 $dotSourceOutput = @(. $deployPath)
@@ -69,6 +70,9 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Assert-BrowserResult',
     'Get-RemoteIdentity',
     'Get-RepositoryContext',
+    'Get-PrePushRepositoryState',
+    'Assert-PrePushRepositoryState',
+    'Invoke-ExactHeadPush',
     'Get-RemainingWholeSeconds',
     'Watch-PagesWorkflowRun',
     'Get-PagesWorkflowRun',
@@ -175,6 +179,8 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
     PushPermission = 'true'
     Relation = 'local-ahead'
     SnapshotDrift = $false
+    ContractExit = 0
+    ContractTimeout = $false
   }
   foreach ($key in $Scenario.Keys) { $settings[$key] = $Scenario[$key] }
 
@@ -195,6 +201,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       '^node scripts/check-version-consistency\.test\.js$' { 'node:version-test'; break }
       '^node scripts/check-version-consistency\.js$' { 'node:version-gate'; break }
       '^node -e ' { 'node:vm-script'; break }
+      '^pwsh -NoProfile -File scripts/test-deploy\.ps1$' { 'pwsh:contract'; break }
       '^gh auth status$' { 'gh:auth'; break }
       '^gh api repos/green-tea-king/md-mind-map --jq \.permissions\.push$' { 'gh:permission'; break }
       '^git ls-remote origin refs/heads/master$' { 'git:ls-remote'; break }
@@ -214,6 +221,10 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       TimeoutSeconds = $timeoutSeconds
     })
 
+    if ($key -eq 'pwsh:contract' -and $settings.ContractTimeout) {
+      throw 'Native command timed out after 60 seconds: pwsh -NoProfile -File scripts/test-deploy.ps1'
+    }
+
     $exitCode = 0
     $stdout = switch ($key) {
       'git:branch' { [string]$settings.Branch; break }
@@ -223,6 +234,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       'git:staged-diff' { $exitCode = [int]$settings.StagedDiffExit; ''; break }
       'git:status' { @($settings.Untracked | ForEach-Object { "?? $_" }) -join "`n"; break }
       'node:vm-script' { '{"version":"10.78","date":"2026-07-19"}'; break }
+      'pwsh:contract' { $exitCode = [int]$settings.ContractExit; 'Deployment contract tests passed: 60/60.'; break }
       'gh:auth' { $exitCode = [int]$settings.AuthExit; ''; break }
       'gh:permission' { [string]$settings.PushPermission; break }
       'git:ls-remote' { "$remoteHead`trefs/heads/master"; break }
@@ -272,7 +284,7 @@ Test-Case 'production repository preflight executes the exact checked command se
   Assert-True ($context.OriginSlug -eq 'green-tea-king/md-mind-map') 'exact repository slug was not retained'
   $expected = @(
     'git:branch', 'git:fetch-url', 'git:push-url', 'git:working-diff', 'git:staged-diff', 'git:status',
-    'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'gh:auth', 'gh:permission',
+    'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'pwsh:contract', 'gh:auth', 'gh:permission',
     'git:ls-remote', 'git:fetch', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
     'git:log', 'git:changed-paths', 'snapshot:2'
   )
@@ -290,6 +302,24 @@ Test-Case 'production repository preflight executes the exact checked command se
     'design.md' = 'hash:design.md'
     'repository-history.bundle' = 'hash:repository-history.bundle'
   })
+}
+
+Test-Case 'production preflight runs the full contract suite before external probes and fails closed' {
+  foreach ($case in @(
+    @{ Scenario = @{ ContractExit = 1 }; Message = 'Native command failed' },
+    @{ Scenario = @{ ContractTimeout = $true }; Message = 'timed out after 60 seconds' }
+  )) {
+    $fixture = New-ProductionPreflightFixture $case.Scenario
+    $threw = $false
+    try { [void](Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider) } catch {
+      $threw = $_.Exception.Message -match [regex]::Escape($case.Message)
+    }
+    Assert-True $threw "contract preflight did not fail closed: $($case.Message)"
+    $keys = @($fixture.Calls | ForEach-Object Key)
+    Assert-True ($keys -contains 'pwsh:contract') 'full contract suite was not invoked'
+    Assert-True (@($keys | Where-Object { $_ -like 'gh:*' -or $_ -eq 'git:ls-remote' -or $_ -eq 'git:fetch' }).Count -eq 0) `
+      "failed contract suite reached an external probe: $($keys -join '|')"
+  }
 }
 
 Test-Case 'production preflight rejects wrong or multiple push URLs before external probes' {
@@ -366,6 +396,7 @@ Test-Case 'production final repository observation uses the checked native seam'
     $stdout = switch -Regex ("$filePath $joined") {
       '^git branch --show-current$' { 'master'; break }
       '^git rev-parse HEAD$' { $head; break }
+      '^git rev-parse refs/heads/master$' { $head; break }
       '^git rev-parse refs/remotes/origin/master$' { $head; break }
       '^git remote get-url --all origin$' { 'https://github.com/green-tea-king/md-mind-map.git'; break }
       '^git remote get-url --push --all origin$' { 'https://github.com/green-tea-king/md-mind-map.git'; break }
@@ -382,7 +413,8 @@ Test-Case 'production final repository observation uses the checked native seam'
   }.GetNewClosure()
   $snapshot = { param($repoPath, $protectedPaths) [ordered]@{ fixture = 'same' } }
   $state = Get-RepositoryState -Repo 'fixture' -Native $native -SnapshotProvider $snapshot
-  Assert-True ($state.Branch -eq 'master' -and $state.Head -eq $head) 'final state omitted branch or HEAD'
+  Assert-True ($state.Branch -eq 'master' -and $state.Head -eq $head -and $state.LocalMasterHead -eq $head) `
+    'final state omitted branch, HEAD, or local master'
   Assert-True ($state.OriginHead -eq $head -and $state.RemoteHead -eq $head) 'final state omitted origin/master or remote HEAD'
   Assert-True ($state.TrackedClean -and $state.StagedClean) 'final state reported clean fixtures as dirty'
   Assert-True (@($state.Untracked).Count -eq 6) `
@@ -426,6 +458,7 @@ Test-Case 'dry run bypasses expected-head mismatch' {
 
 $goodBrowser = [pscustomobject]@{
   Title = 'MK2MD v10.77'; Brand = 'MK2MD'; VersionText = 'v10.77 · 2026-07-17'
+  SelfTest = 'pass'; Detail = ''
   Passed = 11; Failed = 0; ConsoleErrors = @(); PageErrors = @(); Warnings = @(1,2,3,4,5,6)
 }
 
@@ -677,6 +710,17 @@ Test-Case 'browser result rejects an incomplete self-test' {
   Assert-True $threw 'incomplete self-test was accepted'
 }
 
+Test-Case 'browser result rejects an explicit failed self-test despite clean counters' {
+  $bad = $goodBrowser.PSObject.Copy()
+  $bad.SelfTest = 'fail'
+  $bad.Detail = 'fixture explicitly failed'
+  $threw = $false
+  try { Assert-BrowserResult $bad '10.77' '2026-07-17' } catch {
+    $threw = $_.Exception.Message -match 'self-test status' -and $_.Exception.Message -match 'fixture explicitly failed'
+  }
+  Assert-True $threw 'explicit self-test failure was accepted when counters looked clean'
+}
+
 Test-Case 'browser result rejects warning count above baseline' {
   Assert-True ([bool](Get-Command Assert-BrowserResult -ErrorAction SilentlyContinue)) 'Assert-BrowserResult is undefined'
   $bad = $goodBrowser.PSObject.Copy(); $bad.Warnings = @(1,2,3,4,5,6,7)
@@ -741,6 +785,120 @@ function New-TestRepositoryState([object]$Context) {
   }
 }
 
+function New-PrePushFixture([Collections.IDictionary]$BeforeOverrides = @{}) {
+  $initial = New-TestRepositoryContext 'local-ahead'
+  $before = @{
+    Branch = 'master'; Head = $initial.Head; LocalMasterHead = $initial.Head
+    OriginHead = $initial.RemoteHead; RemoteHead = $initial.RemoteHead
+    FetchUrl = $initial.FetchUrl; PushUrl = $initial.PushUrl
+    WorkingDiffExit = 0; StagedDiffExit = 0
+    Untracked = @($script:ProtectedUntracked); ProtectedHash = 'same'
+  }
+  foreach ($key in $BeforeOverrides.Keys) { $before[$key] = $BeforeOverrides[$key] }
+  $after = @{
+    Branch = 'master'; Head = $initial.Head; LocalMasterHead = $initial.Head
+    OriginHead = $initial.Head; RemoteHead = $initial.Head
+    FetchUrl = $initial.FetchUrl; PushUrl = $initial.PushUrl
+    WorkingDiffExit = 0; StagedDiffExit = 0
+    Untracked = @($script:ProtectedUntracked); ProtectedHash = 'same'
+  }
+  $calls = [Collections.Generic.List[string]]::new()
+  $phase = @{ Value = 0 }
+  $native = {
+    param($filePath, $arguments, $repoPath, $allowedExitCodes, $timeoutSeconds)
+    $arguments = @($arguments)
+    $joined = $arguments -join ' '
+    if ($filePath -eq 'git' -and $joined -eq 'push origin master') {
+      [void]$calls.Add('git:push')
+      return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' }
+    }
+    if ($filePath -eq 'git' -and $joined -eq 'branch --show-current') { $phase.Value++ }
+    $state = if ($phase.Value -le 1) { $before } else { $after }
+    $key = switch -Regex ("$filePath $joined") {
+      '^git branch --show-current$' { 'git:branch'; break }
+      '^git remote get-url --all origin$' { 'git:fetch-url'; break }
+      '^git remote get-url --push --all origin$' { 'git:push-url'; break }
+      '^git rev-parse HEAD$' { 'git:head'; break }
+      '^git rev-parse refs/heads/master$' { 'git:local-master'; break }
+      '^git rev-parse refs/remotes/origin/master$' { 'git:origin-master'; break }
+      '^git ls-remote origin refs/heads/master$' { 'git:ls-remote'; break }
+      '^git diff --quiet$' { 'git:working-diff'; break }
+      '^git diff --cached --quiet$' { 'git:staged-diff'; break }
+      '^git -c core\.quotepath=false status --porcelain=v1 -uall$' { 'git:status'; break }
+      default { throw "Unexpected pre-push command: $filePath $joined" }
+    }
+    [void]$calls.Add("$($phase.Value):$key")
+    $exitCode = 0
+    $stdout = switch ($key) {
+      'git:branch' { [string]$state.Branch; break }
+      'git:fetch-url' { [string]$state.FetchUrl; break }
+      'git:push-url' { [string]$state.PushUrl; break }
+      'git:head' { [string]$state.Head; break }
+      'git:local-master' { [string]$state.LocalMasterHead; break }
+      'git:origin-master' { [string]$state.OriginHead; break }
+      'git:ls-remote' { "$($state.RemoteHead)`trefs/heads/master"; break }
+      'git:working-diff' { $exitCode = [int]$state.WorkingDiffExit; ''; break }
+      'git:staged-diff' { $exitCode = [int]$state.StagedDiffExit; ''; break }
+      'git:status' { @($state.Untracked | ForEach-Object { "?? $_" }) -join "`n"; break }
+    }
+    return [pscustomobject]@{ ExitCode = $exitCode; StdOut = $stdout; StdErr = '' }
+  }.GetNewClosure()
+  $snapshotProvider = {
+    param($repoPath, $protectedPaths)
+    [void]$calls.Add("$($phase.Value):snapshot")
+    $state = if ($phase.Value -le 1) { $before } else { $after }
+    return [ordered]@{ fixture = [string]$state.ProtectedHash }
+  }.GetNewClosure()
+  return [pscustomobject]@{
+    Initial = $initial; Native = $native; SnapshotProvider = $snapshotProvider; Calls = $calls
+  }
+}
+
+Test-Case 'exact push adapter reads and verifies the full state immediately around git push' {
+  $fixture = New-PrePushFixture
+  Invoke-ExactHeadPush -Initial $fixture.Initial -Repo 'fixture' -Native $fixture.Native `
+    -SnapshotProvider $fixture.SnapshotProvider
+  $calls = @($fixture.Calls)
+  $pushIndex = $calls.IndexOf('git:push')
+  Assert-True ($pushIndex -gt 0) 'production exact push adapter did not invoke git push'
+  Assert-True ($calls[$pushIndex - 1] -eq '1:snapshot') `
+    "full pre-push state was not the operation immediately before git push: $($calls -join '|')"
+  Assert-True ($calls[$pushIndex + 1] -eq '2:git:branch') `
+    "post-push state verification was not immediate: $($calls -join '|')"
+  Assert-True ($calls -contains '2:git:fetch-url' -and $calls -contains '2:git:push-url' -and `
+    $calls -contains '2:git:head' -and $calls -contains '2:git:origin-master' -and $calls -contains '2:git:ls-remote') `
+    "post-push URL or SHA verification was incomplete: $($calls -join '|')"
+}
+
+Test-Case 'every pre-push repository race stops before git push' {
+  Assert-True ([bool](Get-Command Invoke-ExactHeadPush -ErrorAction SilentlyContinue)) `
+    'Invoke-ExactHeadPush is undefined'
+  $mutations = @(
+    @{ Name = 'branch'; Value = @{ Branch = 'feature' } },
+    @{ Name = 'HEAD'; Value = @{ Head = 'c' * 40 } },
+    @{ Name = 'local master'; Value = @{ LocalMasterHead = 'c' * 40 } },
+    @{ Name = 'fetch URL'; Value = @{ FetchUrl = 'https://github.com/someone/else.git' } },
+    @{ Name = 'push URL'; Value = @{ PushUrl = 'https://github.com/someone/else.git' } },
+    @{ Name = 'tracked worktree'; Value = @{ WorkingDiffExit = 1 } },
+    @{ Name = 'staged index'; Value = @{ StagedDiffExit = 1 } },
+    @{ Name = 'untracked set'; Value = @{ Untracked = @($script:ProtectedUntracked + 'unexpected.txt') } },
+    @{ Name = 'protected hash'; Value = @{ ProtectedHash = 'changed' } },
+    @{ Name = 'remote SHA'; Value = @{ RemoteHead = 'c' * 40 } },
+    @{ Name = 'origin master'; Value = @{ OriginHead = 'c' * 40 } }
+  )
+  foreach ($mutation in $mutations) {
+    $fixture = New-PrePushFixture $mutation.Value
+    $threw = $false
+    try {
+      Invoke-ExactHeadPush -Initial $fixture.Initial -Repo 'fixture' -Native $fixture.Native `
+        -SnapshotProvider $fixture.SnapshotProvider
+    } catch { $threw = $true }
+    Assert-True $threw "pre-push $($mutation.Name) drift was accepted"
+    Assert-True (-not ($fixture.Calls -contains 'git:push')) `
+      "pre-push $($mutation.Name) drift reached git push: $($fixture.Calls -join '|')"
+  }
+}
+
 function New-TestDeploymentAdapters(
   [Collections.Generic.List[string]]$Calls,
   [object]$Context,
@@ -764,7 +922,7 @@ function New-TestDeploymentAdapters(
       [void]$Calls.Add("browser:$url")
       return $browserResult
     }.GetNewClosure()
-    Push = { param($head) [void]$Calls.Add("push:$head") }.GetNewClosure()
+    Push = { param($context) [void]$Calls.Add("push:$($context.Head)") }.GetNewClosure()
     RunList = { [void]$Calls.Add('run-list'); return $Runs }.GetNewClosure()
     WatchRun = {
       param($id, $timeoutSeconds)

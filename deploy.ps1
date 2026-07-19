@@ -734,6 +734,8 @@ JSON.stringify({
       Title = [string]$dom.title
       Brand = [string]$dom.brand
       VersionText = [string]$dom.versionText
+      SelfTest = [string]$dom.selfTest
+      Detail = [string]$dom.detail
       Passed = [int]$dom.passed
       Failed = [int]$dom.failed
       ConsoleErrors = @($consoleErrors)
@@ -809,6 +811,10 @@ function Assert-BrowserResult {
   if ($Result.Title -ne "MK2MD v$Version") { $problems.Add("title '$($Result.Title)'") }
   if ($Result.Brand -ne 'MK2MD') { $problems.Add("brand '$($Result.Brand)'") }
   if ($Result.VersionText -ne "v$Version · $Date") { $problems.Add("version text '$($Result.VersionText)'") }
+  if ([string]$Result.SelfTest -ne 'pass') {
+    $detail = [string]$Result.Detail
+    $problems.Add("self-test status '$($Result.SelfTest)'$(if ($detail) { ": $detail" })")
+  }
   if ([int]$Result.Passed -ne 11 -or [int]$Result.Failed -ne 0) {
     $problems.Add("self-test $($Result.Passed)/11 with $($Result.Failed) failed")
   }
@@ -932,6 +938,9 @@ process.stdout.write(JSON.stringify({version,date}));
     throw "Node app identity probe returned invalid JSON: $appIdentityJson"
   }
 
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'pwsh' `
+    -Arguments @('-NoProfile', '-File', 'scripts/test-deploy.ps1') -Repo $Repo)
+
   $indexPath = Join-Path $Repo 'index.html'
   $version = [string]$appIdentity.version
   $date = [string]$appIdentity.date
@@ -1003,6 +1012,8 @@ function Get-RepositoryState {
   $remoteIdentity = Get-RemoteIdentity -Repo $Repo -Native $Native
   $head = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
+  $localMasterHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('rev-parse', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
   $originHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('rev-parse', "refs/remotes/origin/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
   $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
@@ -1024,6 +1035,7 @@ function Get-RepositoryState {
   return [pscustomobject]@{
     Branch = $branch
     Head = $head
+    LocalMasterHead = $localMasterHead
     OriginHead = $originHead
     RemoteHead = $remoteHead
     FetchUrl = $remoteIdentity.FetchUrl
@@ -1033,6 +1045,67 @@ function Get-RepositoryState {
     Untracked = $untracked
     ProtectedHashes = $protectedHashes
   }
+}
+
+function Get-PrePushRepositoryState {
+  [CmdletBinding()]
+  param(
+    [string]$Repo = $script:RepoRoot,
+    [scriptblock]$Native,
+    [scriptblock]$SnapshotProvider
+  )
+
+  return Get-RepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
+}
+
+function Assert-PrePushRepositoryState {
+  param(
+    [Parameter(Mandatory)][object]$Initial,
+    [Parameter(Mandatory)][object]$State,
+    [switch]$AfterPush
+  )
+
+  if ($State.Branch -ne $script:ExpectedBranch) {
+    throw "Pre-push repository branch '$($State.Branch)' is not $($script:ExpectedBranch)."
+  }
+  foreach ($property in @('Head', 'LocalMasterHead')) {
+    if ([string]$State.$property -ne [string]$Initial.Head) {
+      throw "Pre-push repository $property '$($State.$property)' does not equal initial HEAD '$($Initial.Head)'."
+    }
+  }
+  foreach ($property in @('FetchUrl', 'PushUrl')) {
+    if ([string]$State.$property -ne [string]$Initial.$property) {
+      throw "Pre-push repository $property changed from '$($Initial.$property)' to '$($State.$property)'."
+    }
+  }
+  if (-not [bool]$State.TrackedClean) { throw 'Pre-push repository tracked working tree is not clean.' }
+  if (-not [bool]$State.StagedClean) { throw 'Pre-push repository staged index is not clean.' }
+  Assert-ExactUntrackedSet -Actual @($State.Untracked) -Expected $script:ProtectedUntracked
+  Assert-ProtectedSnapshot -Before $Initial.ProtectedHashes -After $State.ProtectedHashes
+
+  $expectedRemoteHead = if ($AfterPush) { [string]$Initial.Head } else { [string]$Initial.RemoteHead }
+  foreach ($property in @('OriginHead', 'RemoteHead')) {
+    if ([string]$State.$property -ne $expectedRemoteHead) {
+      throw "Pre-push repository $property '$($State.$property)' does not equal expected remote HEAD '$expectedRemoteHead'."
+    }
+  }
+}
+
+function Invoke-ExactHeadPush {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][object]$Initial,
+    [string]$Repo = $script:RepoRoot,
+    [scriptblock]$Native,
+    [scriptblock]$SnapshotProvider
+  )
+
+  $before = Get-PrePushRepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
+  Assert-PrePushRepositoryState -Initial $Initial -State $before
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('push', 'origin', $script:ExpectedBranch) -Repo $Repo)
+  $after = Get-PrePushRepositoryState -Repo $Repo -Native $Native -SnapshotProvider $SnapshotProvider
+  Assert-PrePushRepositoryState -Initial $Initial -State $after -AfterPush
 }
 
 function Assert-ExactRepositoryState {
@@ -1271,12 +1344,8 @@ function New-DeploymentAdapters {
     StopLocalSite = { param($site) Stop-OwnedProcess -Process $site.Process -Label 'local HTTP server' }
     Browser = { param($url, $version, $date) Invoke-ChromeSelfTest -Url $url -ExpectedVersion $version -ExpectedDate $date }
     Push = {
-      param($head)
-      $currentHead = (Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', 'HEAD')).StdOut.Trim().ToLowerInvariant()
-      if ($currentHead -ne $head) { throw "Local HEAD changed before push: $currentHead; expected $head." }
-      [void](Invoke-CheckedNative -FilePath 'git' -Arguments @('push', 'origin', 'master'))
-      $remote = ((Invoke-CheckedNative -FilePath 'git' -Arguments @('ls-remote', 'origin', 'refs/heads/master')).StdOut.Trim() -split '\s+')[0]
-      if ($remote -ne $head) { throw "origin/master is $remote after push, expected $head." }
+      param($context)
+      Invoke-ExactHeadPush -Initial $context -Repo $script:RepoRoot
     }
     RunList = {
       param($timeoutSeconds)
@@ -1354,7 +1423,7 @@ function Invoke-Mk2mdDeployment {
 
   $pushed = $false
   if ($context.Relation -eq 'local-ahead') {
-    & $activeAdapters['Push'] $context.Head
+    & $activeAdapters['Push'] $context
     $pushed = $true
   }
   $run = Wait-ExactHeadRun -Head $context.Head -Adapters $activeAdapters -TimeoutSeconds 600
