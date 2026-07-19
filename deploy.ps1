@@ -29,7 +29,8 @@ function Invoke-CheckedNative {
     [Parameter(Mandatory)][string]$FilePath,
     [string[]]$Arguments = @(),
     [string]$WorkingDirectory = $script:RepoRoot,
-    [int]$TimeoutSeconds = 0
+    [int]$TimeoutSeconds = 60,
+    [int[]]$AllowedExitCodes = @(0)
   )
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $FilePath
@@ -52,7 +53,7 @@ function Invoke-CheckedNative {
   $stdout = $stdoutTask.GetAwaiter().GetResult()
   $stderr = $stderrTask.GetAwaiter().GetResult()
   $result = [pscustomobject]@{ ExitCode = $process.ExitCode; StdOut = $stdout; StdErr = $stderr }
-  if ($result.ExitCode -ne 0) {
+  if ($result.ExitCode -notin $AllowedExitCodes) {
     throw "Native command failed ($($result.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
   }
   return $result
@@ -324,7 +325,7 @@ function Invoke-CdpCommand {
   $receiveMessage = {
     param([int]$RemainingMilliseconds)
     Receive-CdpMessage -WebSocket $WebSocket -TimeoutMilliseconds $RemainingMilliseconds
-  }.GetNewClosure()
+  }
   return Wait-CdpCommandResponse -Id $id -Method $Method -DeadlineUtc $deadlineUtc `
     -EventSink $EventSink -ReceiveMessage $receiveMessage
 }
@@ -562,15 +563,314 @@ function Assert-BrowserResult {
   if ($problems.Count -gt 0) { throw "Browser preflight failed: $($problems -join '; ')." }
 }
 
-function Invoke-Mk2mdDeployment {
-  param([switch]$IsDryRun, [string]$ConfirmedHead)
-  if (-not $IsDryRun) {
-    throw 'Actual deployment is disabled by the policy-core build.'
+function ConvertTo-RepositorySlug {
+  param([Parameter(Mandatory)][string]$RemoteUrl)
+
+  $value = $RemoteUrl.Trim()
+  if ($value -match '^https://github\.com/(?<slug>[^/]+/[^/]+?)(?:\.git)?$') {
+    return $Matches.slug
   }
+  if ($value -match '^git@github\.com:(?<slug>[^/]+/[^/]+?)(?:\.git)?$') {
+    return $Matches.slug
+  }
+  throw "Unsupported origin URL: $value"
+}
+
+function Get-RepositoryContext {
+  [CmdletBinding()]
+  param([string]$Repo = $script:RepoRoot)
+
+  $branch = (Invoke-CheckedNative -FilePath 'git' -Arguments @('branch', '--show-current') -WorkingDirectory $Repo).StdOut.Trim()
+  if ($branch -ne $script:ExpectedBranch) { throw "Deployment branch must be $($script:ExpectedBranch), got $branch." }
+
+  $originUrl = (Invoke-CheckedNative -FilePath 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $Repo).StdOut.Trim()
+  $originSlug = ConvertTo-RepositorySlug -RemoteUrl $originUrl
+  if ($originSlug -ne $script:ExpectedRepoSlug) { throw "Deployment origin must be $($script:ExpectedRepoSlug), got $originSlug." }
+
+  $workingDiff = Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--quiet') -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)
+  if ($workingDiff.ExitCode -ne 0) { throw 'Tracked working-tree changes must be committed before deployment.' }
+  $stagedDiff = Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--cached', '--quiet') -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)
+  if ($stagedDiff.ExitCode -ne 0) { throw 'Staged changes must be committed before deployment.' }
+
+  $statusLines = @((Invoke-CheckedNative -FilePath 'git' -Arguments @('-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-uall') -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+  $trackedStatus = @($statusLines | Where-Object { -not $_.StartsWith('?? ') })
+  if ($trackedStatus.Count -gt 0) { throw "Tracked repository status is not clean: $($trackedStatus -join ', ')" }
+  $untracked = @($statusLines | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
+  Assert-ExactUntrackedSet -Actual $untracked -Expected $script:ProtectedUntracked
+
+  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('scripts/check-version-consistency.test.js') -WorkingDirectory $Repo)
+  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('scripts/check-version-consistency.js') -WorkingDirectory $Repo)
+  $syntaxProbe = @'
+const fs=require('fs'),vm=require('vm');
+const html=fs.readFileSync('index.html','utf8');
+const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+if(scripts.length!==1) throw new Error(`Expected 1 inline script, got ${scripts.length}`);
+new vm.Script(scripts[0][1]);
+'@
+  [void](Invoke-CheckedNative -FilePath 'node' -Arguments @('-e', $syntaxProbe) -WorkingDirectory $Repo)
+
+  $indexPath = Join-Path $Repo 'index.html'
+  $indexSource = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8
+  if ($indexSource -notmatch "const APP_VERSION = '(?<version>[^']+)';") { throw 'APP_VERSION was not found in index.html.' }
+  $version = $Matches.version
+  if ($indexSource -notmatch "const APP_DATE = '(?<date>\d{4}-\d{2}-\d{2})';") { throw 'APP_DATE was not found in index.html.' }
+  $date = $Matches.date
+
+  [void](Invoke-CheckedNative -FilePath 'gh' -Arguments @('auth', 'status') -WorkingDirectory $Repo)
+  $pushPermission = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('api', "repos/$($script:ExpectedRepoSlug)", '--jq', '.permissions.push') -WorkingDirectory $Repo).StdOut.Trim()
+  if ($pushPermission -ne 'true') { throw "GitHub push permission is not available for $($script:ExpectedRepoSlug)." }
+
+  $remoteLine = (Invoke-CheckedNative -FilePath 'git' -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -WorkingDirectory $Repo).StdOut.Trim()
+  if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable." }
+  $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
+  [void](Invoke-CheckedNative -FilePath 'git' -Arguments @('fetch', '--no-tags', 'origin', $script:ExpectedBranch) -WorkingDirectory $Repo)
+  $head = (Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $Repo).StdOut.Trim().ToLowerInvariant()
+
+  $remoteAncestor = (Invoke-CheckedNative -FilePath 'git' -Arguments @('merge-base', '--is-ancestor', $remoteHead, $head) -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
+  $localAncestor = (Invoke-CheckedNative -FilePath 'git' -Arguments @('merge-base', '--is-ancestor', $head, $remoteHead) -WorkingDirectory $Repo -AllowedExitCodes @(0, 1)).ExitCode -eq 0
+  $relation = Resolve-RemoteRelation -LocalHead $head -RemoteHead $remoteHead -RemoteIsAncestor $remoteAncestor -LocalIsAncestor $localAncestor
+  $commits = if ($relation -eq 'local-ahead') {
+    @((Invoke-CheckedNative -FilePath 'git' -Arguments @('log', '--format=%H %s', "$remoteHead..$head") -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+  } else { @() }
+  $changedPaths = if ($relation -eq 'local-ahead') {
+    @((Invoke-CheckedNative -FilePath 'git' -Arguments @('diff', '--name-only', "$remoteHead..$head") -WorkingDirectory $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
+  } else { @() }
+  $protectedHashes = Get-ProtectedSnapshot -Repo $Repo -Paths $script:ProtectedUntracked
+
   return [pscustomobject]@{
-    Phase = 'policy-core'
-    DryRun = $true
-    ConfirmedHead = $ConfirmedHead
+    Branch = $branch
+    OriginSlug = $originSlug
+    Head = $head
+    RemoteHead = $remoteHead
+    Relation = $relation
+    Version = $version
+    Date = $date
+    Untracked = $untracked
+    Commits = $commits
+    ChangedPaths = $changedPaths
+    ProtectedHashes = $protectedHashes
+    IndexPath = $indexPath
+  }
+}
+
+function Select-ExactHeadRun {
+  param([object[]]$Runs, [Parameter(Mandatory)][string]$Head)
+
+  return @($Runs | Where-Object {
+    $_.headSha -eq $Head -and $_.event -eq 'push'
+  } | Sort-Object { [DateTimeOffset]$_.createdAt } -Descending | Select-Object -First 1)[0]
+}
+
+function Assert-SuccessfulPagesRun {
+  param([Parameter(Mandatory)][object]$Run, [Parameter(Mandatory)][string]$Head)
+
+  if ($Run.headSha -ne $Head) { throw "Pages run HEAD '$($Run.headSha)' does not equal local HEAD '$Head'." }
+  if ($Run.event -ne 'push') { throw "Pages run event '$($Run.event)' is not push." }
+  if ($Run.status -ne 'completed' -or $Run.conclusion -ne 'success') {
+    throw "Pages run for HEAD $Head is $($Run.status)/$($Run.conclusion)."
+  }
+  foreach ($jobName in @('build', 'deploy')) {
+    $job = @($Run.jobs | Where-Object name -eq $jobName | Select-Object -First 1)[0]
+    if ($null -eq $job -or $job.status -ne 'completed' -or $job.conclusion -ne 'success') {
+      $state = if ($null -eq $job) { 'missing' } else { "$($job.status)/$($job.conclusion)" }
+      throw "Pages $jobName job for HEAD $Head is $state."
+    }
+  }
+}
+
+function Wait-ExactHeadRun {
+  param(
+    [Parameter(Mandatory)][string]$Head,
+    [Parameter(Mandatory)][Collections.IDictionary]$Adapters,
+    [int]$TimeoutSeconds = 600
+  )
+
+  $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+  $lastState = 'no matching push run observed'
+  do {
+    $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+    $runs = @(& $Adapters['RunList'] $remainingSeconds)
+    $run = Select-ExactHeadRun -Runs $runs -Head $Head
+    if ($null -ne $run) {
+      $lastState = "id=$($run.databaseId) $($run.status)/$($run.conclusion)"
+      try {
+        $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+        & $Adapters['WatchRun'] $run.databaseId $remainingSeconds
+      } catch {
+        throw "Pages run watch failed or timed out for HEAD $Head; last state: $lastState. $($_.Exception.Message)"
+      }
+      $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+      $completeRun = & $Adapters['RunView'] $run.databaseId $remainingSeconds
+      Assert-SuccessfulPagesRun -Run $completeRun -Head $Head
+      return $completeRun
+    }
+    if ([DateTimeOffset]::UtcNow -ge $deadline) { break }
+    & $Adapters['Sleep'] 2
+  } while ([DateTimeOffset]::UtcNow -lt $deadline)
+  throw "Timed out after $TimeoutSeconds seconds waiting for Pages run for HEAD $Head; last state: $lastState."
+}
+
+function Get-LiveSourceBytes {
+  param([Parameter(Mandatory)][string]$Url, [int]$TimeoutSeconds = 15)
+
+  $client = [Net.Http.HttpClient]::new()
+  $client.Timeout = [TimeSpan]::FromSeconds([Math]::Max(1, [Math]::Min(15, $TimeoutSeconds)))
+  try {
+    return $client.GetByteArrayAsync($Url).GetAwaiter().GetResult()
+  } finally {
+    $client.Dispose()
+  }
+}
+
+function Wait-LiveSourceMatch {
+  param(
+    [Parameter(Mandatory)][string]$LiveUrl,
+    [Parameter(Mandatory)][byte[]]$LocalBytes,
+    [Parameter(Mandatory)][Collections.IDictionary]$Adapters,
+    [int]$TimeoutSeconds = 300
+  )
+
+  $localHash = [Security.Cryptography.SHA256]::HashData($LocalBytes)
+  $localHashText = [Convert]::ToHexString($localHash)
+  $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+  $lastProblem = 'live source was not fetched'
+  do {
+    try {
+      $remainingSeconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+      $liveBytes = [byte[]](& $Adapters['LiveSource'] $LiveUrl $remainingSeconds)
+      $liveHashText = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($liveBytes))
+      if ($liveHashText -eq $localHashText) {
+        return [pscustomobject]@{ Match = $true; Hash = $localHashText; Url = $LiveUrl }
+      }
+      $lastProblem = "live SHA-256 $liveHashText did not equal local SHA-256 $localHashText"
+    } catch {
+      $lastProblem = $_.Exception.Message
+    }
+    if ([DateTimeOffset]::UtcNow -ge $deadline) { break }
+    & $Adapters['Sleep'] 2
+  } while ([DateTimeOffset]::UtcNow -lt $deadline)
+  throw "Live source SHA-256 did not match within $TimeoutSeconds seconds at $LiveUrl; $lastProblem."
+}
+
+function New-DeploymentAdapters {
+  param([Collections.IDictionary]$Overrides)
+
+  $defaults = @{
+    GetRepositoryContext = { Get-RepositoryContext -Repo $script:RepoRoot }
+    StartLocalSite = { Start-LocalSiteServer -Repo $script:RepoRoot }
+    StopLocalSite = { param($site) Stop-OwnedProcess -Process $site.Process -Label 'local HTTP server' }
+    Browser = { param($url, $version, $date) Invoke-ChromeSelfTest -Url $url -ExpectedVersion $version -ExpectedDate $date }
+    Push = {
+      param($head)
+      $currentHead = (Invoke-CheckedNative -FilePath 'git' -Arguments @('rev-parse', 'HEAD')).StdOut.Trim().ToLowerInvariant()
+      if ($currentHead -ne $head) { throw "Local HEAD changed before push: $currentHead; expected $head." }
+      [void](Invoke-CheckedNative -FilePath 'git' -Arguments @('push', 'origin', 'master'))
+      $remote = ((Invoke-CheckedNative -FilePath 'git' -Arguments @('ls-remote', 'origin', 'refs/heads/master')).StdOut.Trim() -split '\s+')[0]
+      if ($remote -ne $head) { throw "origin/master is $remote after push, expected $head." }
+    }
+    RunList = {
+      param($timeoutSeconds)
+      $json = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'list', '--workflow', 'pages.yml', '--branch', 'master', '--json', 'databaseId,headSha,status,conclusion,url,createdAt,updatedAt,event') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds)))).StdOut
+      return @($json | ConvertFrom-Json)
+    }
+    WatchRun = {
+      param($id, $timeoutSeconds)
+      [void](Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'watch', [string]$id, '--exit-status') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(600, $timeoutSeconds))))
+    }
+    RunView = {
+      param($id, $timeoutSeconds)
+      $json = (Invoke-CheckedNative -FilePath 'gh' -Arguments @('run', 'view', [string]$id, '--json', 'databaseId,headSha,status,conclusion,url,event,jobs') -TimeoutSeconds ([Math]::Max(1, [Math]::Min(60, $timeoutSeconds)))).StdOut
+      return $json | ConvertFrom-Json
+    }
+    LocalSource = { [IO.File]::ReadAllBytes((Join-Path $script:RepoRoot 'index.html')) }
+    LiveSource = { param($url, $timeoutSeconds) Get-LiveSourceBytes -Url $url -TimeoutSeconds $timeoutSeconds }
+    ProtectedSnapshot = { Get-ProtectedSnapshot -Repo $script:RepoRoot -Paths $script:ProtectedUntracked }
+    Sleep = { param($seconds) Start-Sleep -Seconds $seconds }
+  }
+  if ($null -ne $Overrides) {
+    foreach ($key in $Overrides.Keys) { $defaults[$key] = $Overrides[$key] }
+  }
+  return $defaults
+}
+
+function Invoke-Mk2mdDeployment {
+  [CmdletBinding()]
+  param(
+    [switch]$IsDryRun,
+    [string]$ConfirmedHead,
+    [Collections.IDictionary]$Adapters
+  )
+
+  $activeAdapters = New-DeploymentAdapters -Overrides $Adapters
+  $context = & $activeAdapters['GetRepositoryContext']
+  if ($context.Branch -ne $script:ExpectedBranch -or $context.OriginSlug -ne $script:ExpectedRepoSlug) {
+    throw 'Repository context does not match the fixed MK2MD origin/master deployment target.'
+  }
+  if ($context.Relation -in @('remote-ahead', 'diverged')) {
+    throw "Deployment stopped because origin/master is $($context.Relation)."
+  }
+
+  Assert-ExpectedHead -Actual $context.Head -Expected $ConfirmedHead -DryRun ([bool]$IsDryRun)
+  Write-Host "MK2MD v$($context.Version) ($($context.Date))"
+  Write-Host "HEAD: $($context.Head)"
+  Write-Host "origin/master: $($context.RemoteHead) [$($context.Relation)]"
+  foreach ($commit in @($context.Commits)) { Write-Host "commit: $commit" }
+  foreach ($path in @($context.ChangedPaths)) { Write-Host "path: $path" }
+
+  $site = $null
+  try {
+    $site = & $activeAdapters['StartLocalSite']
+    $separator = if ($site.Url.Contains('?')) { '&' } else { '?' }
+    $localUrl = "$($site.Url)${separator}ci-selftest=1&t=$($context.Head)"
+    $localBrowser = & $activeAdapters['Browser'] $localUrl $context.Version $context.Date
+    Assert-BrowserResult -Result $localBrowser -Version $context.Version -Date $context.Date
+  } finally {
+    if ($null -ne $site) { & $activeAdapters['StopLocalSite'] $site }
+  }
+
+  $afterLocalSnapshot = & $activeAdapters['ProtectedSnapshot']
+  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After $afterLocalSnapshot
+  Write-Host ($localBrowser | ConvertTo-Json -Compress -Depth 6)
+
+  if ($IsDryRun) {
+    return [pscustomobject]@{
+      DryRun = $true
+      Version = $context.Version
+      Date = $context.Date
+      Head = $context.Head
+      Relation = $context.Relation
+      LocalBrowser = $localBrowser
+      ProtectedHashes = $afterLocalSnapshot
+    }
+  }
+
+  $pushed = $false
+  if ($context.Relation -eq 'local-ahead') {
+    & $activeAdapters['Push'] $context.Head
+    $pushed = $true
+  }
+  $run = Wait-ExactHeadRun -Head $context.Head -Adapters $activeAdapters -TimeoutSeconds 600
+  $liveUrl = "https://green-tea-king.github.io/md-mind-map/?ci-selftest=1&t=$($context.Head)"
+  $localBytes = [byte[]](& $activeAdapters['LocalSource'])
+  [void](Wait-LiveSourceMatch -LiveUrl $liveUrl -LocalBytes $localBytes -Adapters $activeAdapters -TimeoutSeconds 300)
+  $liveBrowser = & $activeAdapters['Browser'] $liveUrl $context.Version $context.Date
+  Assert-BrowserResult -Result $liveBrowser -Version $context.Version -Date $context.Date
+  $afterSnapshot = & $activeAdapters['ProtectedSnapshot']
+  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After $afterSnapshot
+
+  return [pscustomobject]@{
+    Version = $context.Version
+    Date = $context.Date
+    Head = $context.Head
+    Relation = $context.Relation
+    Pushed = $pushed
+    ActionsId = $run.databaseId
+    ActionsUrl = $run.url
+    LiveUrl = $liveUrl
+    LocalBrowser = $localBrowser
+    LiveBrowser = $liveBrowser
+    ProtectedHashes = $afterSnapshot
+    CompletedAt = [DateTimeOffset]::Now
   }
 }
 
