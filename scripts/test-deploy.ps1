@@ -538,8 +538,15 @@ Test-Case 'marker creation failure preserves the unowned directory and reports c
     Assert-True ([string]$captured.Exception.Data['CleanupEvidence'] -match 'preserved|marker') `
       'marker creation failure omitted cleanup evidence'
   } finally {
-    if ($null -ne $created -and (Test-Path -LiteralPath $created.Path)) {
-      Remove-Item -LiteralPath $created.Path -Recurse -Force -ErrorAction SilentlyContinue
+    if ($null -ne $created -and (Test-Path -LiteralPath $created.Path -PathType Container)) {
+      $fixturePath = [IO.Path]::GetFullPath($created.Path)
+      $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($fixturePath))
+      $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+      $fixtureName = [IO.Path]::GetFileName($fixturePath)
+      $fixtureItem = Get-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+      if ($fixtureParent -eq $tempRoot -and $fixtureName -match '^mk2md-chrome-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -and $null -ne $fixtureItem -and $fixtureItem.LinkType -notin @('SymbolicLink', 'Junction')) {
+        Remove-Item -LiteralPath $fixturePath -Recurse -Force -ErrorAction SilentlyContinue
+      }
     }
   }
 }
