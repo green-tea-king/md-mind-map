@@ -54,7 +54,8 @@ function validateVersionConsistency({ agentsText, readmeText, indexText }) {
     readmeVersion: [],
     readmeDate: [],
     readmeDeploymentSection: [],
-    deployVersion: []
+    deployVersion: [],
+    deployCommand: []
   };
 
   const baseline = captureExactly(
@@ -166,9 +167,15 @@ function validateVersionConsistency({ agentsText, readmeText, indexText }) {
   if (deployment !== null) {
     deployVersion = captureExactly(
       deployment,
-      /^\.\\deploy\.ps1 -Message "Deploy v([^"]+)"\s*$/gm,
+      /^# Deploy v([^\s]+)\s*$/gm,
       'README deploy example',
       issueGroups.deployVersion
+    );
+    captureExactly(
+      deployment,
+      /^\.\\deploy\.ps1 -ExpectedHead \$head\s*$/gm,
+      'README deploy command',
+      issueGroups.deployCommand
     );
   }
 

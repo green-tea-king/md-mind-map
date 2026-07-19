@@ -22,7 +22,9 @@ function consistentSources() {
       '## Deployment',
       '',
       '```powershell',
-      '.\\deploy.ps1 -Message "Deploy v10.76"',
+      '$head = (git rev-parse HEAD).Trim()',
+      '# Deploy v10.76',
+      '.\\deploy.ps1 -ExpectedHead $head',
       '```',
       '',
       '## Local Files'
@@ -106,6 +108,23 @@ test('reports a README Current Version mismatch', () => {
   const result = validateVersionConsistency(sources);
   assert.equal(result.ok, false);
   assert.equal(issueFor(result, 'README Current Version').actual, '10.75');
+});
+
+test('reports a README deploy comment version mismatch', () => {
+  const sources = consistentSources();
+  sources.readmeText = sources.readmeText.replace('# Deploy v10.76', '# Deploy v10.75');
+  const result = validateVersionConsistency(sources);
+  assert.equal(issueFor(result, 'README deploy example').actual, '10.75');
+});
+
+test('rejects the legacy deploy Message command structure', () => {
+  const sources = consistentSources();
+  sources.readmeText = sources.readmeText.replace(
+    '.\\deploy.ps1 -ExpectedHead $head',
+    '.\\deploy.ps1 -Message "Deploy v10.76"'
+  );
+  const result = validateVersionConsistency(sources);
+  assert.match(issueFor(result, 'README deploy command').actual, /0 matches/);
 });
 
 test('reports a newest Changelog mismatch without reading old history as current', () => {

@@ -27,6 +27,10 @@ jobs:
       - name: Check repository version consistency
         run: node scripts/check-version-consistency.js
 
+      - name: Test deployment tool contract
+        shell: pwsh
+        run: ./scripts/test-deploy.ps1
+
       - name: Prepare single-file site
         run: |
           mkdir site
