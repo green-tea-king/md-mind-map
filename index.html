@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.80
-  Last updated: 2026-07-19
+  Version: v10.81
+  Last updated: 2026-07-20
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-20 v10.81：部署工具改用本機 TEMP 作為 Git、Python 與 Chrome 子程序工作目錄，Git 改以明確 git-dir/work-tree 執行，HTTP server 以明確 --directory 讀取原專案資料夾，避免 WebDAV working directory 限制擋住 DryRun 與部署。
   - 2026-07-19 v10.80：補強 push 前狀態重驗、完整部署合約前置閘門、原生與 DOM 逾時清理、自我測試狀態及 Chrome profile 失敗清理。
   - 2026-07-19 v10.79：強化 fail-closed 部署邊界；鎖定 fetch、push 與 Actions repository，提前保護本機檔案，完成前重驗精確 HEAD，並捕捉延遲瀏覽器錯誤。
   - 2026-07-19 v10.78：部署工具改為 fail-closed；只部署已提交的精確 HEAD，加入 DryRun、原遠端防護、Actions 綁定、正式站雜湊與 Chrome 11/11 驗證。
@@ -729,9 +730,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.80';
+const APP_VERSION = '10.81';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-19';
+const APP_DATE = '2026-07-20';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -5379,9 +5380,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.80'
-      && APP_DATE === '2026-07-19'
-      && APP_TITLE === 'MK2MD v10.80'
+      && APP_VERSION === '10.81'
+      && APP_DATE === '2026-07-20'
+      && APP_TITLE === 'MK2MD v10.81'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

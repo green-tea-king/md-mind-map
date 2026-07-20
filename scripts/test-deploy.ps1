@@ -42,6 +42,34 @@ Test-Case 'deployment source exposes dry-run exact-head and bounded CDP contract
   Assert-True ($source.Contains('Invoke-ExactHeadPush -Initial $context')) `
     'production push adapter does not use the exact pre-push barrier'
 }
+Test-Case 'browser gate child processes do not use repository paths as working directories' {
+  Assert-True ($source.Contains('function Get-StableProcessWorkingDirectory')) `
+    'stable child-process working directory helper is missing'
+  Assert-True ($source -match '(?s)function Start-LocalSiteServer.*?\$psi\.WorkingDirectory = Get-StableProcessWorkingDirectory') `
+    'local HTTP server still uses the repository path as its process working directory'
+  Assert-True ($source -match '(?s)function Start-LocalSiteServer.*?''-{2}directory''.*?\$repoPath') `
+    'local HTTP server does not serve the repository through an explicit --directory argument'
+  Assert-True ($source -match '(?s)function Invoke-ChromeSelfTest.*?\$psi\.WorkingDirectory = Get-StableProcessWorkingDirectory') `
+    'headless Chrome still uses the repository path as its process working directory'
+}
+Test-Case 'production git child processes use explicit git-dir work-tree and per-command safe directory' {
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$FilePath -eq ''git''') `
+    'repository native seam does not special-case production git commands'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$gitRepo = \(Resolve-Path') `
+    'production git commands do not resolve the repository path before passing it to git'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?safe\.directory=\$gitRepo') `
+    'production git commands do not set per-command safe.directory for the repository path'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?--git-dir.*?--work-tree') `
+    'production git commands are not pinned with explicit git-dir and work-tree'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?-WorkingDirectory \(Get-StableProcessWorkingDirectory\)') `
+    'production git commands still depend on the repository as child-process cwd'
+}
+Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
+  Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `
+    'child-process path normalizer is missing'
+  Assert-True ($source -match '(?s)function Start-LocalSiteServer.*?\$repoPath = Resolve-ChildProcessPath') `
+    'local HTTP server does not normalize mapped repository paths before passing --directory'
+}
 
 $dotSourceOutput = @(. $deployPath)
 
@@ -56,6 +84,8 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Resolve-RemoteRelation',
     'Assert-ExpectedHead',
     'Get-FreeLoopbackPort',
+    'Get-StableProcessWorkingDirectory',
+    'Resolve-ChildProcessPath',
     'Get-InstalledChromePath',
     'New-OwnedChromeProfile',
     'Remove-OwnedChromeProfile',
@@ -247,8 +277,8 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       '^pwsh -NoProfile -File scripts/test-deploy\.ps1$' { 'pwsh:contract'; break }
       '^gh auth status$' { 'gh:auth'; break }
       '^gh api repos/green-tea-king/md-mind-map --jq \.permissions\.push$' { 'gh:permission'; break }
-      '^git ls-remote origin refs/heads/master$' { 'git:ls-remote'; break }
-      '^git fetch --no-tags origin master$' { 'git:fetch'; break }
+      '^git ls-remote https://github\.com/green-tea-king/md-mind-map\.git refs/heads/master$' { 'git:ls-remote'; break }
+      '^git fetch --no-tags https://github\.com/green-tea-king/md-mind-map\.git master:refs/remotes/origin/master$' { 'git:fetch'; break }
       '^git rev-parse HEAD$' { 'git:head'; break }
       '^git merge-base --is-ancestor ' { if ($arguments[2] -eq $remoteHead) { 'git:remote-ancestor' } else { 'git:local-ancestor' }; break }
       '^git log --format=%H %s ' { 'git:log'; break }
@@ -449,7 +479,7 @@ Test-Case 'production final repository observation uses the checked native seam'
         ($untrackedFixture | ForEach-Object { "?? $_" }) -join "`n"
         break
       }
-      '^git ls-remote origin refs/heads/master$' { "$head`trefs/heads/master"; break }
+      '^git ls-remote https://github\.com/green-tea-king/md-mind-map\.git refs/heads/master$' { "$head`trefs/heads/master"; break }
       default { throw "Unexpected final-state command: $filePath $joined" }
     }
     return [pscustomobject]@{ ExitCode = 0; StdOut = $stdout; StdErr = '' }
@@ -896,7 +926,7 @@ function New-PrePushFixture(
     param($filePath, $arguments, $repoPath, $allowedExitCodes, $timeoutSeconds)
     $arguments = @($arguments)
     $joined = $arguments -join ' '
-    if ($filePath -eq 'git' -and $joined -eq 'push origin master') {
+    if ($filePath -eq 'git' -and $joined -eq 'push https://github.com/green-tea-king/md-mind-map.git master') {
       [void]$calls.Add('git:push')
       if ($PushThrows) { throw [TimeoutException]::new('fixture push timeout after remote acceptance is uncertain') }
       return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' }
@@ -910,7 +940,7 @@ function New-PrePushFixture(
       '^git rev-parse HEAD$' { 'git:head'; break }
       '^git rev-parse refs/heads/master$' { 'git:local-master'; break }
       '^git rev-parse refs/remotes/origin/master$' { 'git:origin-master'; break }
-      '^git ls-remote origin refs/heads/master$' { 'git:ls-remote'; break }
+      '^git ls-remote https://github\.com/green-tea-king/md-mind-map\.git refs/heads/master$' { 'git:ls-remote'; break }
       '^git diff --quiet$' { 'git:working-diff'; break }
       '^git diff --cached --quiet$' { 'git:staged-diff'; break }
       '^git -c core\.quotepath=false status --porcelain=v1 -uall$' { 'git:status'; break }

@@ -110,6 +110,18 @@ function Invoke-RepositoryNative {
     [int]$TimeoutSeconds = 60
   )
   if ($null -eq $Native) {
+    if ($FilePath -eq 'git') {
+      $gitRepo = (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).Path
+      $gitArguments = @(
+        '-c',
+        "safe.directory=$gitRepo",
+        "--git-dir=$(Join-Path $gitRepo '.git')",
+        "--work-tree=$gitRepo"
+      ) + @($Arguments)
+      return Invoke-CheckedNative -FilePath $FilePath -Arguments $gitArguments `
+        -WorkingDirectory (Get-StableProcessWorkingDirectory) `
+        -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
+    }
     return Invoke-CheckedNative -FilePath $FilePath -Arguments $Arguments `
       -WorkingDirectory $Repo -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
   }
@@ -171,6 +183,30 @@ function Get-FreeLoopbackPort {
   } finally {
     $listener.Stop()
   }
+}
+
+function Get-StableProcessWorkingDirectory {
+  $tempPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+  if (-not (Test-Path -LiteralPath $tempPath -PathType Container)) {
+    throw "Stable process working directory is unavailable: $tempPath"
+  }
+  return $tempPath
+}
+
+function Resolve-ChildProcessPath {
+  param([Parameter(Mandatory)][string]$Path)
+
+  $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+  $root = [IO.Path]::GetPathRoot($resolvedPath)
+  if (-not $root) { return $resolvedPath }
+
+  $driveName = $root.TrimEnd('\').TrimEnd(':')
+  $drive = Get-PSDrive -Name $driveName -PSProvider FileSystem -ErrorAction SilentlyContinue
+  if ($null -eq $drive -or -not $drive.DisplayRoot) { return $resolvedPath }
+
+  $relative = $resolvedPath.Substring($root.Length).TrimStart('\')
+  if ($relative) { return (Join-Path $drive.DisplayRoot $relative) }
+  return $drive.DisplayRoot
 }
 
 function Get-InstalledChromePath {
@@ -390,18 +426,18 @@ function Stop-OwnedProcess {
 function Start-LocalSiteServer {
   param([Parameter(Mandatory)][string]$Repo)
 
-  $repoPath = (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).Path
+  $repoPath = Resolve-ChildProcessPath -Path $Repo
   $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $port = Get-FreeLoopbackPort
   $url = "http://127.0.0.1:$port/index.html"
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $python
-  $psi.WorkingDirectory = $repoPath
+  $psi.WorkingDirectory = Get-StableProcessWorkingDirectory
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
-  foreach ($argument in @('-m', 'http.server', [string]$port, '--bind', '127.0.0.1')) {
+  foreach ($argument in @('-m', 'http.server', [string]$port, '--bind', '127.0.0.1', '--directory', $repoPath)) {
     [void]$psi.ArgumentList.Add($argument)
   }
 
@@ -581,7 +617,7 @@ function Invoke-ChromeSelfTest {
   $debugPort = Get-FreeLoopbackPort
   $psi = [Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $chromePath
-  $psi.WorkingDirectory = $script:RepoRoot
+  $psi.WorkingDirectory = Get-StableProcessWorkingDirectory
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
@@ -1024,11 +1060,16 @@ process.stdout.write(JSON.stringify({version,date}));
   if ($pushPermission -ne 'true') { throw "GitHub push permission is not available for $($script:ExpectedRepoSlug)." }
 
   $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
+    -Arguments @('ls-remote', $remoteIdentity.FetchUrl, "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
   if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable." }
   $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
   [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @('fetch', '--no-tags', 'origin', $script:ExpectedBranch) -Repo $Repo)
+    -Arguments @(
+      'fetch',
+      '--no-tags',
+      $remoteIdentity.FetchUrl,
+      "$($script:ExpectedBranch):refs/remotes/origin/$($script:ExpectedBranch)"
+    ) -Repo $Repo)
   $head = (Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
 
   $remoteAncestor = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
@@ -1090,7 +1131,7 @@ function Get-RepositoryState {
   $originHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('rev-parse', "refs/remotes/origin/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
   $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @('ls-remote', 'origin', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
+    -Arguments @('ls-remote', $remoteIdentity.FetchUrl, "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
   if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable during final verification." }
   $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
 
@@ -1186,7 +1227,7 @@ function Invoke-ExactHeadPush {
   Assert-PrePushRepositoryState -Initial $Initial -State $before
   try {
     [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-      -Arguments @('push', 'origin', $script:ExpectedBranch) -Repo $Repo)
+      -Arguments @('push', $Initial.PushUrl, $script:ExpectedBranch) -Repo $Repo)
   } catch {
     $pushException = $_.Exception
     try {
