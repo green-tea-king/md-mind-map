@@ -16,6 +16,7 @@ $script:CdpCloseTimeoutSeconds = 2
 $script:CdpMinimumObservationMilliseconds = 2000
 $script:CdpQuietWindowMilliseconds = 500
 $script:CdpMaximumObservationMilliseconds = 5000
+$script:GitNativeMaxAttempts = 3
 $script:ProtectedUntracked = @(
   'BACKUP_MANIFEST.md',
   'MD心智圖_v10_00.html',
@@ -99,6 +100,29 @@ function Invoke-CheckedNative {
   return $result
 }
 
+function Invoke-InProcessNative {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$FilePath,
+    [string[]]$Arguments = @(),
+    [string]$WorkingDirectory = '',
+    [int[]]$AllowedExitCodes = @(0)
+  )
+  if ($WorkingDirectory) { Push-Location -LiteralPath $WorkingDirectory }
+  try {
+    $output = @(& $FilePath @Arguments 2>&1)
+    $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    if ($text) { $text += [Environment]::NewLine }
+    $result = [pscustomobject]@{ ExitCode = $LASTEXITCODE; StdOut = $text; StdErr = $text }
+    if ($result.ExitCode -notin $AllowedExitCodes) {
+      throw "Native command failed ($($result.ExitCode)): $FilePath $($Arguments -join ' ')`n$text"
+    }
+    return $result
+  } finally {
+    if ($WorkingDirectory) { Pop-Location }
+  }
+}
+
 function Invoke-RepositoryNative {
   [CmdletBinding()]
   param(
@@ -111,19 +135,61 @@ function Invoke-RepositoryNative {
   )
   if ($null -eq $Native) {
     if ($FilePath -eq 'git') {
-      $gitRepo = (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).Path
+      $gitRepo = (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).ProviderPath
       $gitArguments = @(
         '-c',
         "safe.directory=$gitRepo",
         "--git-dir=$(Join-Path $gitRepo '.git')",
         "--work-tree=$gitRepo"
       ) + @($Arguments)
-      return Invoke-CheckedNative -FilePath $FilePath -Arguments $gitArguments `
-        -WorkingDirectory (Get-StableProcessWorkingDirectory) `
-        -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
+      for ($attempt = 1; $attempt -le $script:GitNativeMaxAttempts; $attempt++) {
+        try {
+          return Invoke-InProcessNative -FilePath $FilePath -Arguments $gitArguments `
+            -AllowedExitCodes $AllowedExitCodes
+        } catch {
+          if ($attempt -ge $script:GitNativeMaxAttempts) { throw }
+          Start-Sleep -Milliseconds (200 * $attempt)
+        }
+      }
     }
-    return Invoke-CheckedNative -FilePath $FilePath -Arguments $Arguments `
-      -WorkingDirectory $Repo -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
+    if ($FilePath -in @('node', 'pwsh')) {
+      for ($attempt = 1; $attempt -le $script:GitNativeMaxAttempts; $attempt++) {
+        try {
+          return Invoke-InProcessNative -FilePath $FilePath -Arguments $Arguments `
+            -WorkingDirectory $Repo -AllowedExitCodes $AllowedExitCodes
+        } catch {
+          if ($attempt -ge $script:GitNativeMaxAttempts) { throw }
+          Start-Sleep -Milliseconds (200 * $attempt)
+        }
+      }
+    }
+    $effectiveArguments = @($Arguments | ForEach-Object {
+      if ($_ -match '^[./\\]*scripts[\\/]' -or $_ -eq 'index.html') {
+        $repoFilePath = Join-Path $Repo $_
+        if ($FilePath -eq 'pwsh') { (Resolve-Path -LiteralPath $repoFilePath -ErrorAction Stop).ProviderPath }
+        else { Resolve-ChildProcessPath $repoFilePath }
+      } elseif ($_ -eq $Repo) {
+        Resolve-ChildProcessPath $Repo
+      } else {
+        $_
+      }
+    })
+    if ($FilePath -eq 'node' -and $Arguments.Count -eq 1 -and $Arguments[0] -match '^scripts[\\/].+\.js$') {
+      $effectiveArguments = @(
+        '-e',
+        'process.chdir(process.argv[1]); require(process.argv[2]);',
+        (Resolve-ChildProcessPath $Repo),
+        (Resolve-ChildProcessPath (Join-Path $Repo $Arguments[0]))
+      )
+    }
+    if ($FilePath -eq 'pwsh' -and $Arguments.Count -eq 3 -and $Arguments[1] -eq '-File' -and $Arguments[2] -match '^scripts[\\/].+\.ps1$') {
+      $scriptPath = (Resolve-Path -LiteralPath (Join-Path $Repo $Arguments[2]) -ErrorAction Stop).ProviderPath
+      $escapedScriptPath = $scriptPath -replace "'", "''"
+      $effectiveArguments = @($Arguments[0], '-Command', "& '$escapedScriptPath'")
+    }
+    return Invoke-CheckedNative -FilePath $FilePath -Arguments $effectiveArguments `
+      -WorkingDirectory (Get-StableProcessWorkingDirectory) `
+      -AllowedExitCodes $AllowedExitCodes -TimeoutSeconds $TimeoutSeconds
   }
   return & $Native $FilePath $Arguments $Repo $AllowedExitCodes $TimeoutSeconds
 }
@@ -196,7 +262,7 @@ function Get-StableProcessWorkingDirectory {
 function Resolve-ChildProcessPath {
   param([Parameter(Mandatory)][string]$Path)
 
-  $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+  $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).ProviderPath
   $root = [IO.Path]::GetPathRoot($resolvedPath)
   if (-not $root) { return $resolvedPath }
 
@@ -1029,7 +1095,8 @@ function Get-RepositoryContext {
     -Arguments @('scripts/check-version-consistency.js') -Repo $Repo)
   $syntaxProbe = @'
 const fs=require('fs'),vm=require('vm');
-const html=fs.readFileSync('index.html','utf8');
+const path=require('path');
+const html=fs.readFileSync(path.join(process.argv[1],'index.html'),'utf8');
 const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
 if(scripts.length!==1) throw new Error(`Expected 1 inline script, got ${scripts.length}`);
 new vm.Script(scripts[0][1]);
@@ -1040,7 +1107,7 @@ if(!date) throw new Error('APP_DATE was not found in index.html.');
 process.stdout.write(JSON.stringify({version,date}));
 '@
   $appIdentityJson = (Invoke-RepositoryNative -Native $Native -FilePath 'node' `
-    -Arguments @('-e', $syntaxProbe) -Repo $Repo).StdOut
+    -Arguments @('-e', $syntaxProbe, $Repo) -Repo $Repo).StdOut
   try {
     $appIdentity = $appIdentityJson | ConvertFrom-Json -ErrorAction Stop
   } catch {

@@ -22,6 +22,7 @@ function Assert-True([bool]$Condition, [string]$Message) {
 }
 
 $source = Get-Content -LiteralPath $deployPath -Raw -Encoding UTF8
+$testSource = Get-Content -LiteralPath $PSCommandPath -Raw -Encoding UTF8
 
 Test-Case 'deployment source has no staging or commit commands' {
   Assert-True ($source -notmatch '(?im)^\s*git\s+(add|commit)\b') 'deploy.ps1 still stages or commits'
@@ -53,22 +54,34 @@ Test-Case 'browser gate child processes do not use repository paths as working d
     'headless Chrome still uses the repository path as its process working directory'
 }
 Test-Case 'production git child processes use explicit git-dir work-tree and per-command safe directory' {
+  Assert-True ($source.Contains('$script:GitNativeMaxAttempts = 3')) `
+    'production git commands do not have a bounded retry budget for transient WebDAV repository reads'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$FilePath -eq ''git''') `
     'repository native seam does not special-case production git commands'
-  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$gitRepo = \(Resolve-Path') `
-    'production git commands do not resolve the repository path before passing it to git'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$gitRepo = \(Resolve-Path.*?\.ProviderPath') `
+    'production git commands do not use provider-native repository paths before passing them to git'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?safe\.directory=\$gitRepo') `
     'production git commands do not set per-command safe.directory for the repository path'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?--git-dir.*?--work-tree') `
     'production git commands are not pinned with explicit git-dir and work-tree'
-  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?-WorkingDirectory \(Get-StableProcessWorkingDirectory\)') `
-    'production git commands still depend on the repository as child-process cwd'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?Invoke-InProcessNative') `
+    'production git commands do not use PowerShell native invocation for WebDAV-safe repository reads'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$attempt -le \$script:GitNativeMaxAttempts') `
+    'production git commands do not retry transient repository read failures within the bounded budget'
 }
 Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
   Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `
     'child-process path normalizer is missing'
+  Assert-True ($source -match '(?s)function Resolve-ChildProcessPath.*?\.ProviderPath') `
+    'child-process path normalizer does not strip provider-qualified PowerShell paths'
   Assert-True ($source -match '(?s)function Start-LocalSiteServer.*?\$repoPath = Resolve-ChildProcessPath') `
     'local HTTP server does not normalize mapped repository paths before passing --directory'
+}
+Test-Case 'Chrome fixture process discovery supports non-Windows CI hosts' {
+  Assert-True ($testSource.Contains('Get-Command Get-CimInstance -ErrorAction SilentlyContinue')) `
+    'Chrome fixture process discovery does not guard Get-CimInstance availability'
+  Assert-True ($testSource.Contains("Test-Path -LiteralPath '/proc' -PathType Container")) `
+    'Chrome fixture process discovery does not include a Linux procfs fallback'
 }
 
 $dotSourceOutput = @(. $deployPath)
@@ -77,6 +90,7 @@ Test-Case 'dot-sourcing does not invoke deployment' {
   Assert-True ($dotSourceOutput.Count -eq 0) 'dot-sourcing invoked deployment'
   $requiredFunctions = @(
     'Invoke-CheckedNative',
+    'Invoke-InProcessNative',
     'Invoke-RepositoryNative',
     'Assert-ExactUntrackedSet',
     'Get-ProtectedSnapshot',
@@ -670,10 +684,31 @@ Test-Case 'primary browser timeout keeps evidence when cleanup also fails' {
 
 function Get-ChromeFamilyProcessIds {
   $ids = [Collections.Generic.List[int]]::new()
-  foreach ($name in @('chrome', 'google-chrome', 'chromium', 'chromium-browser')) {
-    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='$name.exe'" -ErrorAction SilentlyContinue)) {
-      if ($process.CommandLine -match '(?i)mk2md-chrome-[0-9a-f]{32}' -and -not $ids.Contains([int]$process.ProcessId)) {
-        $ids.Add([int]$process.ProcessId)
+  $ownedProfilePattern = '(?i)mk2md-chrome-[0-9a-f]{32}'
+  if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+    foreach ($name in @('chrome', 'google-chrome', 'chromium', 'chromium-browser')) {
+      foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='$name.exe'" -ErrorAction SilentlyContinue)) {
+        if ($process.CommandLine -match $ownedProfilePattern -and -not $ids.Contains([int]$process.ProcessId)) {
+          $ids.Add([int]$process.ProcessId)
+        }
+      }
+    }
+    return @($ids)
+  }
+
+  if (Test-Path -LiteralPath '/proc' -PathType Container) {
+    foreach ($entry in @(Get-ChildItem -LiteralPath '/proc' -Directory -ErrorAction SilentlyContinue)) {
+      if ($entry.Name -notmatch '^\d+$') { continue }
+      $cmdlinePath = Join-Path $entry.FullName 'cmdline'
+      try {
+        $commandLine = [IO.File]::ReadAllText($cmdlinePath).Replace([char]0, ' ')
+      } catch {
+        continue
+      }
+      if ($commandLine -match $ownedProfilePattern -and
+          $commandLine -match '(?i)(chrome|chromium)' -and
+          -not $ids.Contains([int]$entry.Name)) {
+        $ids.Add([int]$entry.Name)
       }
     }
   }
