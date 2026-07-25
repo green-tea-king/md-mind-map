@@ -58,8 +58,8 @@ Test-Case 'production git child processes use explicit git-dir work-tree and per
     'production git commands do not have a bounded retry budget for transient WebDAV repository reads'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$FilePath -eq ''git''') `
     'repository native seam does not special-case production git commands'
-  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$gitRepo = \(Resolve-Path.*?\.ProviderPath') `
-    'production git commands do not use provider-native repository paths before passing them to git'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$gitRepo = Resolve-RepositoryProviderPath -Repo \$Repo') `
+    'production git commands do not use the bounded provider-path resolver before passing paths to git'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?safe\.directory=\$gitRepo') `
     'production git commands do not set per-command safe.directory for the repository path'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?--git-dir.*?--work-tree') `
@@ -74,6 +74,12 @@ Test-Case 'production git child processes use explicit git-dir work-tree and per
 Test-Case 'repository node and pwsh child processes use a stable local working directory' {
   Assert-True ($source -match '(?s)if \(\$FilePath -in @\(''node'', ''pwsh''\)\).*?Invoke-InProcessNative.*?-WorkingDirectory \(Get-StableProcessWorkingDirectory\)') `
     'repository node and pwsh child processes still use the WebDAV repository as their working directory'
+}
+Test-Case 'repository path resolution retries transient WebDAV access failures' {
+  Assert-True ($source.Contains('function Resolve-RepositoryProviderPath')) `
+    'repository path resolution does not have a bounded WebDAV retry helper'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?Resolve-RepositoryProviderPath -Repo \$Repo') `
+    'production Git commands resolve the repository path without the bounded retry helper'
 }
 Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
   Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `

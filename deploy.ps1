@@ -135,7 +135,7 @@ function Invoke-RepositoryNative {
   )
   if ($null -eq $Native) {
     if ($FilePath -eq 'git') {
-      $gitRepo = (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).ProviderPath
+      $gitRepo = Resolve-RepositoryProviderPath -Repo $Repo
       $gitArguments = @(
         '-c',
         "safe.directory=$gitRepo",
@@ -257,6 +257,21 @@ function Get-StableProcessWorkingDirectory {
     throw "Stable process working directory is unavailable: $tempPath"
   }
   return $tempPath
+}
+
+function Resolve-RepositoryProviderPath {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Repo)
+
+  for ($attempt = 1; $attempt -le $script:GitNativeMaxAttempts; $attempt++) {
+    try {
+      return (Resolve-Path -LiteralPath $Repo -ErrorAction Stop).ProviderPath
+    } catch {
+      if ($attempt -ge $script:GitNativeMaxAttempts) { throw }
+      Start-Sleep -Milliseconds (200 * $attempt)
+    }
+  }
+  throw "Unable to resolve repository provider path: $Repo"
 }
 
 function Resolve-ChildProcessPath {
