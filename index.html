@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.85
+  Version: v10.86
   Last updated: 2026-07-25
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-25 v10.86：修正部署工具 Git 子程序工作目錄，所有 git 命令改用穩定本機 Temp cwd 並以 git-dir/work-tree 指向原專案，避免 WebDAV cwd 使 push 失敗。
   - 2026-07-25 v10.85：修正部署工具 Chrome CDP DOM 輪詢，Runtime.evaluate 暫時沒有 value 欄位時繼續等待，避免 StrictMode 誤中止本機與正式站驗證。
   - 2026-07-25 v10.84：修正部署工具 push 後驗證，正式遠端 HEAD 已更新時允許本機 origin/master 追蹤分支暫時仍停在舊 SHA，避免誤判部署失敗。
   - 2026-07-25 v10.83：HTML 單檔匯出改為靜態展示檔，只保留平移、縮放與置中檢視，不再保留編輯、儲存、匯出、右鍵選單、命令面板與自檢功能。
@@ -734,7 +735,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.85';
+const APP_VERSION = '10.86';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-07-25';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5406,9 +5407,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.85'
+      && APP_VERSION === '10.86'
       && APP_DATE === '2026-07-25'
-      && APP_TITLE === 'MK2MD v10.85'
+      && APP_TITLE === 'MK2MD v10.86'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

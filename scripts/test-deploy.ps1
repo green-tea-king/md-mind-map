@@ -66,6 +66,8 @@ Test-Case 'production git child processes use explicit git-dir work-tree and per
     'production git commands are not pinned with explicit git-dir and work-tree'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?Invoke-InProcessNative') `
     'production git commands do not use PowerShell native invocation for WebDAV-safe repository reads'
+  Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$FilePath -eq ''git''.*?Invoke-InProcessNative.*?-WorkingDirectory \(Get-StableProcessWorkingDirectory\)') `
+    'production git commands do not use a stable local working directory'
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$attempt -le \$script:GitNativeMaxAttempts') `
     'production git commands do not retry transient repository read failures within the bounded budget'
 }
