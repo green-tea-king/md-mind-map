@@ -922,6 +922,7 @@ function New-TestRepositoryState([object]$Context) {
   [pscustomobject]@{
     Branch = 'master'
     Head = $Context.Head
+    LocalMasterHead = $Context.Head
     OriginHead = $Context.Head
     RemoteHead = $Context.Head
     FetchUrl = $Context.FetchUrl
@@ -1022,6 +1023,15 @@ Test-Case 'exact push adapter reads and verifies the full state immediately arou
   Assert-True ($calls -contains '2:git:fetch-url' -and $calls -contains '2:git:push-url' -and `
     $calls -contains '2:git:head' -and $calls -contains '2:git:origin-master' -and $calls -contains '2:git:ls-remote') `
     "post-push URL or SHA verification was incomplete: $($calls -join '|')"
+}
+
+Test-Case 'post-push verification accepts stale origin tracking when remote HEAD is exact' {
+  $initial = New-TestRepositoryContext 'local-ahead'
+  $after = New-TestRepositoryState $initial
+  $after.OriginHead = $initial.RemoteHead
+  $after.RemoteHead = $initial.Head
+  Assert-PrePushRepositoryState -Initial $initial -State $after -AfterPush
+  Assert-ExactRepositoryState -Initial $initial -Final $after
 }
 
 Test-Case 'every pre-push repository race stops before git push' {

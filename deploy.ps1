@@ -1273,10 +1273,19 @@ function Assert-PrePushRepositoryState {
 
   Assert-RepositoryWriteBoundaryState -Initial $Initial -State $State
 
-  $expectedRemoteHead = if ($AfterPush) { [string]$Initial.Head } else { [string]$Initial.RemoteHead }
+  if ($AfterPush) {
+    if ([string]$State.RemoteHead -ne [string]$Initial.Head) {
+      throw "Pre-push repository RemoteHead '$($State.RemoteHead)' does not equal expected remote HEAD '$($Initial.Head)'."
+    }
+    if ([string]$State.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+      throw "Pre-push repository OriginHead '$($State.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and expected HEAD '$($Initial.Head)'."
+    }
+    return
+  }
+
   foreach ($property in @('OriginHead', 'RemoteHead')) {
-    if ([string]$State.$property -ne $expectedRemoteHead) {
-      throw "Pre-push repository $property '$($State.$property)' does not equal expected remote HEAD '$expectedRemoteHead'."
+    if ([string]$State.$property -ne [string]$Initial.RemoteHead) {
+      throw "Pre-push repository $property '$($State.$property)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
     }
   }
 }
@@ -1337,10 +1346,13 @@ function Assert-ExactRepositoryState {
   if ($Final.Branch -ne $script:ExpectedBranch) {
     throw "Final repository branch '$($Final.Branch)' is not $($script:ExpectedBranch)."
   }
-  foreach ($property in @('Head', 'OriginHead', 'RemoteHead')) {
+  foreach ($property in @('Head', 'RemoteHead')) {
     if ([string]$Final.$property -ne [string]$Initial.Head) {
       throw "Final repository $property '$($Final.$property)' does not equal initial HEAD '$($Initial.Head)'."
     }
+  }
+  if ([string]$Final.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+    throw "Final repository OriginHead '$($Final.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and initial HEAD '$($Initial.Head)'."
   }
   foreach ($property in @('FetchUrl', 'PushUrl')) {
     if ([string]$Final.$property -ne [string]$Initial.$property) {
