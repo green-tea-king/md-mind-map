@@ -804,7 +804,15 @@ JSON.stringify({
         continue
       }
       [void](Get-RemainingMilliseconds -DeadlineUtc $deadline -Operation 'Chrome self-test DOM loop')
-      $value = $evaluation.result.result.value
+      $value = $null
+      $outerResultProperty = $evaluation.PSObject.Properties['result']
+      if ($null -ne $outerResultProperty) {
+        $innerResultProperty = $outerResultProperty.Value.PSObject.Properties['result']
+        if ($null -ne $innerResultProperty) {
+          $valueProperty = $innerResultProperty.Value.PSObject.Properties['value']
+          if ($null -ne $valueProperty) { $value = $valueProperty.Value }
+        }
+      }
       if ($value) {
         $dom = $value | ConvertFrom-Json
         if ($dom.selfTest -in @('pass', 'fail')) { break }
@@ -853,7 +861,15 @@ JSON.stringify({
         }
         throw
       }
-      $value = $evaluation.result.result.value
+      $value = $null
+      $outerResultProperty = $evaluation.PSObject.Properties['result']
+      if ($null -ne $outerResultProperty) {
+        $innerResultProperty = $outerResultProperty.Value.PSObject.Properties['result']
+        if ($null -ne $innerResultProperty) {
+          $valueProperty = $innerResultProperty.Value.PSObject.Properties['value']
+          if ($null -ne $valueProperty) { $value = $valueProperty.Value }
+        }
+      }
       if (-not $value) { throw 'Chrome returned no DOM state during the CDP observation window.' }
       $dom = $value | ConvertFrom-Json
 

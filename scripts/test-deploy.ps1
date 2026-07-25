@@ -213,6 +213,8 @@ Test-Case 'DOM self-test loop pins every command and sleep to its 90-second dead
     '90-second DOM loop does not pass its deadline into CDP commands'
   Assert-True ($source -match '(?s)while \(\[DateTime\]::UtcNow -lt \$deadline\).*?Start-Sleep -Milliseconds \(\[Math\]::Min\(250,') `
     '90-second DOM loop sleep is not bounded by remaining milliseconds'
+  Assert-True (-not $source.Contains('$evaluation.result.result.value')) `
+    'DOM loop directly dereferences an optional Runtime.evaluate value under StrictMode'
 }
 
 Test-Case 'deadline helper rejects zero-budget waits before invoking adapters' {
