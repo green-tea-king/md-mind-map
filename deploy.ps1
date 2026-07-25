@@ -153,9 +153,23 @@ function Invoke-RepositoryNative {
       }
     }
     if ($FilePath -in @('node', 'pwsh')) {
+      $childArguments = @($Arguments)
+      if ($FilePath -eq 'node' -and $Arguments.Count -eq 1 -and $Arguments[0] -match '^scripts[\\/].+\.js$') {
+        $childArguments = @(
+          '-e',
+          'process.chdir(process.argv[1]); require(process.argv[2]);',
+          (Resolve-ChildProcessPath $Repo),
+          (Resolve-ChildProcessPath (Join-Path $Repo $Arguments[0]))
+        )
+      }
+      if ($FilePath -eq 'pwsh' -and $Arguments.Count -eq 3 -and $Arguments[1] -eq '-File' -and $Arguments[2] -match '^scripts[\\/].+\.ps1$') {
+        $scriptPath = (Resolve-Path -LiteralPath (Join-Path $Repo $Arguments[2]) -ErrorAction Stop).ProviderPath
+        $escapedScriptPath = $scriptPath -replace "'", "''"
+        $childArguments = @($Arguments[0], '-Command', "& '$escapedScriptPath'")
+      }
       for ($attempt = 1; $attempt -le $script:GitNativeMaxAttempts; $attempt++) {
         try {
-          return Invoke-InProcessNative -FilePath $FilePath -Arguments $Arguments `
+          return Invoke-InProcessNative -FilePath $FilePath -Arguments $childArguments `
             -WorkingDirectory (Get-StableProcessWorkingDirectory) -AllowedExitCodes $AllowedExitCodes
         } catch {
           if ($attempt -ge $script:GitNativeMaxAttempts) { throw }

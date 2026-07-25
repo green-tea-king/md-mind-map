@@ -81,6 +81,10 @@ Test-Case 'repository path resolution retries transient WebDAV access failures' 
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?Resolve-RepositoryProviderPath -Repo \$Repo') `
     'production Git commands resolve the repository path without the bounded retry helper'
 }
+Test-Case 'repository node scripts use explicit paths after leaving the WebDAV cwd' {
+  Assert-True ($source -match '(?s)if \(\$FilePath -in @\(''node'', ''pwsh''\)\).*?\$childArguments = @\(\$Arguments\).*?Invoke-InProcessNative -FilePath \$FilePath -Arguments \$childArguments') `
+    'repository node scripts still rely on a relative path after using a stable cwd'
+}
 Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
   Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `
     'child-process path normalizer is missing'
