@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.82
-  Last updated: 2026-07-20
+  Version: v10.83
+  Last updated: 2026-07-25
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-25 v10.83：HTML 單檔匯出改為靜態展示檔，只保留平移、縮放與置中檢視，不再保留編輯、儲存、匯出、右鍵選單、命令面板與自檢功能。
   - 2026-07-20 v10.82：修正部署合約測試在 Linux GitHub Actions runner 上的 Chrome fixture process 探測，保留 Windows CIM 路徑並加入 procfs fallback。
   - 2026-07-20 v10.81：部署工具改用本機 TEMP 作為 Git、Python 與 Chrome 子程序工作目錄，Git 改以明確 git-dir/work-tree 執行，HTTP server 以明確 --directory 讀取原專案資料夾，避免 WebDAV working directory 限制擋住 DryRun 與部署。
   - 2026-07-19 v10.80：補強 push 前狀態重驗、完整部署合約前置閘門、原生與 DOM 逾時清理、自我測試狀態及 Chrome profile 失敗清理。
@@ -731,9 +732,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.82';
+const APP_VERSION = '10.83';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-20';
+const APP_DATE = '2026-07-25';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -3181,8 +3182,8 @@ code block
     const pdfText=new TextDecoder().decode(pdf.slice(0,Math.min(pdf.length,900)));
     add('PDF 結構可產生且內含影像物件', pdfHead.startsWith('%PDF-1.4') && /\/Subtype \/Image/.test(pdfText) && /%%EOF/.test(new TextDecoder().decode(pdf.slice(-40))), String(pdf.length));
     const htmlExport=buildSingleFileHTML(toMarkdown(roots));
-    add('HTML 單檔匯出內容包含文件與目前版次', /^<!DOCTYPE html>/i.test(htmlExport) && htmlExport.includes("APP_VERSION = '"+APP_VERSION+"'"), htmlExport.slice(0,80));
-    add('HTML 單檔匯出會內嵌目前心智圖內容', htmlExport.includes('const EXPORTED_MARKDOWN = ') && htmlExport.includes('匯出自檢') && htmlExport.includes('分隔線'), 'embedded markdown');
+    add('HTML 靜態展示匯出內容包含文件與目前版次', /^<!DOCTYPE html>/i.test(htmlExport) && htmlExport.includes('MK2MD v'+APP_VERSION), htmlExport.slice(0,80));
+    add('HTML 靜態展示匯出會包含目前心智圖快照', htmlExport.includes('data-mk2md-static-viewer="true"') && htmlExport.includes('匯出自檢') && htmlExport.includes('分隔線'), 'static snapshot');
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -3225,26 +3226,17 @@ This content must survive single-file HTML export.
 - Literal closing tag: ${closingTag}
 `;
     const html=buildSingleFileHTML(md);
-    add('HTML 單檔含 DOCTYPE 與目前版次', /^<!DOCTYPE html>/i.test(html) && html.includes("APP_VERSION = '"+APP_VERSION+"'"), html.slice(0,80));
-    add('HTML 單檔保留內建範本定義', html.includes('const DEFAULT_MARKDOWN = `') && html.includes('runTemplateSelfTest'), 'DEFAULT_MARKDOWN');
-    add('HTML 單檔改由 EXPORTED_MARKDOWN 啟動', html.includes('const EXPORTED_MARKDOWN = ') && html.includes('roots = parseMarkdown(EXPORTED_MARKDOWN);'), 'EXPORTED_MARKDOWN');
-    add('HTML 單檔已跳脫 script 結尾字串', html.includes('<\\/script>') && !html.includes('Literal closing tag: '+closingTag), 'script boundary');
+    add('HTML 靜態展示含 DOCTYPE 與目前版次', /^<!DOCTYPE html>/i.test(html) && html.includes('MK2MD v'+APP_VERSION), html.slice(0,80));
+    add('HTML 靜態展示標記存在', html.includes('data-mk2md-static-viewer="true"'), 'static marker');
+    add('HTML 靜態展示不保留編輯器功能', !/exportHTML|exportMd|mdPanel|cmdPalette|runTemplateSelfTest|DEFAULT_MARKDOWN/.test(html), 'no editor code');
+    add('HTML 靜態展示保留檢視互動', /function applyTransform/.test(html) && /wheel/.test(html) && /pointerdown/.test(html) && /fitStaticView/.test(html), 'pan zoom fit');
+    add('HTML 靜態展示已跳脫 script 結尾字串', html.includes('Literal closing tag: &lt;/script&gt;') && !html.includes('Literal closing tag: '+closingTag), 'script boundary');
     const openingTag='<'+ 'script>';
     const scriptStart=html.lastIndexOf(openingTag), scriptEnd=html.lastIndexOf(closingTag);
     const script=(scriptStart>=0 && scriptEnd>scriptStart) ? html.slice(scriptStart+8, scriptEnd) : '';
-    try{ new Function(script); add('HTML 單檔內嵌腳本語法可解析', true, String(script.length)); }
-    catch(e){ add('HTML 單檔內嵌腳本語法可解析', false, String(e&&e.message||e)); }
-    const exportNeedle='const EXPORTED_MARKDOWN = ';
-    const startupNeedle='roots = parseMarkdown(EXPORTED_MARKDOWN);';
-    const exportStart=script.lastIndexOf(exportNeedle);
-    const startupStart=exportStart>=0 ? script.indexOf(startupNeedle, exportStart) : -1;
-    const literalSource=(exportStart>=0 && startupStart>exportStart) ? script.slice(exportStart+exportNeedle.length, startupStart).replace(/;\s*$/,'') : '';
-    let exportedMd='';
-    try{ exportedMd=literalSource ? JSON.parse(literalSource) : ''; }catch(e){ exportedMd=''; }
-    add('HTML 單檔可取回內嵌 Markdown', exportedMd.includes('HTML Single File Regression') && exportedMd.includes('Literal closing tag: '+closingTag), exportedMd.slice(0,80));
-    const parsed=exportedMd ? parseMarkdown(exportedMd) : [];
-    const stats=collectTemplateStats(parsed);
-    add('內嵌 Markdown 重新解析後保留分隔線與表格', stats.hr>=1 && stats.table>=1, `hr=${stats.hr}, table=${stats.table}`);
+    try{ new Function(script); add('HTML 靜態展示內嵌腳本語法可解析', true, String(script.length)); }
+    catch(e){ add('HTML 靜態展示內嵌腳本語法可解析', false, String(e&&e.message||e)); }
+    add('HTML 靜態展示保留目前內容快照', html.includes('HTML Single File Regression') && html.includes('Divider') && html.includes('Table'), 'snapshot content');
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -4111,24 +4103,55 @@ function exportMd(){
   showToast('Markdown 已匯出');
 }
 function buildSingleFileHTML(markdown){
-  const mdLiteral=JSON.stringify(markdown).replace(/<\/script/gi,'<\\/script');
-  const currentStartup=`const EXPORTED_MARKDOWN = ${mdLiteral};\nroots = parseMarkdown(EXPORTED_MARKDOWN);`;
-  let html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
-  const startupNeedle='roots = parseMarkdown(DEFAULT_MARKDOWN);';
-  const start=html.lastIndexOf(startupNeedle);
-  if(start>=0){
-    html=html.slice(0,start)+currentStartup+html.slice(start+startupNeedle.length);
+  return buildStaticViewerHTML(markdown);
+}
+function buildStaticViewerHTML(markdown){
+  const savedRoots=roots, savedScale=scale, savedPanX=panX, savedPanY=panY, savedOrient=orient;
+  const savedSelection=[...selection].map(n=>n.id), savedSelected=selected&&selected.id;
+  let snapshot='', mapWidth=1, mapHeight=1;
+  try{
+    roots=parseMarkdown(markdown);
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set(); selected=null;
+    render();
+    mapWidth=Math.ceil(parseFloat(svg.getAttribute('width'))||1);
+    mapHeight=Math.ceil(parseFloat(svg.getAttribute('height'))||1);
+    snapshot=canvas.innerHTML;
+  }finally{
+    roots=savedRoots; scale=savedScale; panX=savedPanX; panY=savedPanY; orient=savedOrient;
+    roots.forEach(r=>setParents(r,null));
+    selection=new Set();
+    savedSelection.forEach(id=>{ const n=findByIdAll(id); if(n) selection.add(n); });
+    selected=savedSelected ? findByIdAll(savedSelected) : null;
+    try{ render(); applyTransform(); }catch(e){ logCaught(e,'restore after static html export'); }
   }
-  return html;
+  const css=`:root{--bg:#f4f6f9;--panel:#ffffff;--line:#c2ccd8;--txt:#1f2933;--accent:#2f6fed;--accent2:#e8f0ff;--node-wrap-width:50em}*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:"Microsoft JhengHei","PingFang TC",system-ui,sans-serif;color:var(--txt);overflow:hidden}body{background:var(--bg)}#viewport{position:fixed;inset:0;overflow:hidden;cursor:grab;background-color:#f7f9fc;background-image:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='40'%20height='40'%3E%3Cg%20fill='none'%20stroke='%23c2ccd8'%20stroke-width='1' stroke-dasharray='4,4'%3E%3Cpath%20d='M0%200H40'/%3E%3Cpath%20d='M0%200V40'/%3E%3C/g%3E%3C/svg%3E")}#viewport.panning{cursor:grabbing}#canvas{position:absolute;left:0;top:0;transform-origin:0 0}svg#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}svg#edges path.edge-flow{stroke-dasharray:6 6}.node{position:absolute;width:max-content;max-width:var(--node-wrap-width);padding:7px 12px;border-radius:9px;background:#fff;border:1.5px solid var(--line);font-size:14px;line-height:1.4;user-select:none;pointer-events:none;writing-mode:horizontal-tb;box-shadow:0 1px 4px rgba(20,40,80,.08);white-space:pre-wrap;overflow-wrap:break-word;word-break:normal}.node .ckbox{margin-right:5px;font-size:1.05em;line-height:1}.node .nicon{margin-right:4px}.node .norder{margin-right:5px;font-weight:700;opacity:.75}.node.preamble,.node.lv0.preamble{font-size:30px;line-height:1.45;padding:13px 18px;max-width:min(2200px,calc(100vw - 48px));font-weight:800;overflow-wrap:normal;word-break:keep-all}.node.quote{font-style:italic;background:#1a1a1a!important;border-color:#1a1a1a!important;color:#fff!important}.node .nnote{display:block;margin-top:7px;padding:7px 11px;border-radius:8px;background:#1a1a1a;color:#fff;font-size:.88em;font-style:italic;white-space:normal}.node .nnote .nqline{display:block;line-height:1.5;opacity:.95}.node a.mlink{color:var(--fx-link,#0369a1);font-weight:700;text-decoration:underline;text-decoration-color:var(--fx-link-line,rgba(3,105,161,.45));text-underline-offset:2px;pointer-events:auto}.node img.mimg{display:block;max-width:160px;max-height:88px;min-width:64px;min-height:36px;width:auto;height:auto;border-radius:6px;margin:1px auto;object-fit:contain}.node .ntext.hasimg{display:block}.node sup.fnref{font-size:.7em;line-height:0;vertical-align:super;color:#2563eb;font-weight:700;padding:0 1px}.node strong{color:var(--fx-bold,#c2410c);font-weight:800}.node em{color:var(--fx-em,#7c3aed);font-style:italic}.node del{color:var(--fx-del,#64748b);text-decoration-color:var(--fx-del-line,#ef4444);text-decoration-thickness:1.5px}.node code.mdcode{font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;font-size:.88em;color:var(--fx-code,#b45309);background:var(--fx-code-bg,rgba(245,158,11,.18));padding:1px 5px;border-radius:4px}.node.fndef{font-size:.94em;opacity:.9}.node.fndef .fnlabel{display:inline-block;font-weight:700;color:#2563eb;margin-right:5px;font-size:.92em}.node.alert{border-left-width:5px;border-left-style:solid}.node.alert .altitle{display:block;font-weight:800;font-size:.9em;margin-bottom:3px;letter-spacing:.3px}.node.alert .albody{display:block;white-space:pre-wrap;font-size:.95em;opacity:.92}.node.alert.note{border-left-color:#2563eb}.node.alert.note .altitle{color:#2563eb}.node.alert.tip{border-left-color:#16a34a}.node.alert.tip .altitle{color:#16a34a}.node.alert.important{border-left-color:#9333ea}.node.alert.important .altitle{color:#9333ea}.node.alert.warning{border-left-color:#d97706}.node.alert.warning .altitle{color:#d97706}.node.alert.caution{border-left-color:#dc2626}.node.alert.caution .altitle{color:#dc2626}.node.done{opacity:.6}.node.d0{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}.node.d1{background:#fff;border-color:#2f6fed;font-weight:600}.node.d2{background:#f3f8ff}.node.lv0{font-size:20px;border-width:3px}.node.lv1{font-size:17px;border-width:2.6px}.node.lv2{font-size:15px;border-width:2.2px}.node.lv3{font-size:14px;border-width:1.9px}.node.lv4{font-size:13px;border-width:1.7px}.node.lv5{font-size:12.5px;border-width:1.5px}.node.lv6{font-size:12px;border-width:1.4px}.node.tablenode,.node.codenode,.node.htmlnode{max-width:920px}.node .ntext.hastable,.node .ntext.hascode,.node .ntext.hashtml{display:block;white-space:normal}.node table.mdtable{border-collapse:collapse;font-size:.93em;line-height:1.35;margin:1px 0}.node table.mdtable th,.node table.mdtable td{border:1px solid rgba(120,132,148,.55);padding:3px 9px;text-align:left;vertical-align:top;white-space:normal}.node table.mdtable th{font-weight:700;background:rgba(120,132,148,.14)}.node pre.mdpre,.node pre.mdhtmlraw{margin:2px 0;padding:8px 11px;border-radius:7px;background:rgba(120,132,148,.16);font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;font-size:.86em;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-width:880px}.node pre.mdpre code{font-family:inherit;background:none;padding:0;white-space:inherit}.node .ntext.htmlsafe>*{max-width:100%}.node .ntext.htmlsafe p,.node .ntext.htmlsafe blockquote{margin:4px 0}.node .ntext.htmlsafe pre{white-space:pre-wrap;overflow-wrap:anywhere}.node .ntext.htmlsafe img{max-width:100%;height:auto}.node.hrnode{width:170px;min-width:120px;max-width:none;padding:9px 0;opacity:1;background:transparent!important;border-width:0!important;border-color:transparent!important;box-shadow:none!important;color:#64748b!important}.node.hrnode .ntext{display:block;width:100%;height:14px;white-space:normal}.node.hrnode .mdhr{display:block;width:100%;height:14px;opacity:.9;margin:0;overflow:visible}.node.hrnode .mdhrline{stroke:currentColor;stroke-width:var(--hrw,2px);stroke-linecap:round;stroke-dasharray:6 6}.node.lv0.hrnode{--hrw:3px}.node.lv1.hrnode{--hrw:2.6px}.node.lv2.hrnode{--hrw:2.2px}.node.lv3.hrnode{--hrw:1.9px}.node.lv4.hrnode{--hrw:1.7px}.node.lv5.hrnode{--hrw:1.5px}.node.lv6.hrnode{--hrw:1.4px}.zoombar{position:fixed;right:14px;bottom:14px;display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:5px;box-shadow:0 2px 8px rgba(0,0,0,.08);z-index:5}.zoombar button{width:30px;height:30px;border:none;background:transparent;font-size:17px;cursor:pointer;border-radius:6px;color:var(--txt)}.zoombar button:hover{background:var(--accent2)}#zoomPct{min-width:48px;border:none;background:transparent;color:var(--txt);font:600 11px/30px system-ui,sans-serif;cursor:pointer;border-radius:6px;padding:0 5px}.badge{position:fixed;left:14px;bottom:14px;z-index:4;color:#64748b;background:rgba(255,255,255,.88);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:700 12px system-ui,sans-serif;box-shadow:0 2px 8px rgba(20,40,80,.08)}`;
+  const js=`const viewport=document.getElementById('viewport'),canvas=document.getElementById('canvas'),zoomPct=document.getElementById('zoomPct');let scale=1,panX=0,panY=0;const mapWidth=${mapWidth},mapHeight=${mapHeight},MIN=0.03,MAX=2.5;function clamp(v,a,b){return Math.max(a,Math.min(b,v))}function applyTransform(){canvas.style.transform='translate('+panX+'px,'+panY+'px) scale('+scale+')';const g=40*scale;viewport.style.backgroundSize=g+'px '+g+'px';viewport.style.backgroundPosition=panX+'px '+panY+'px';zoomPct.textContent=Math.round(scale*100)+'%'}function fitStaticView(){const vw=viewport.clientWidth||1,vh=viewport.clientHeight||1,p=80;scale=Math.max(MIN,Math.min(1,Math.min((vw-p)/Math.max(1,mapWidth),(vh-p)/Math.max(1,mapHeight))));panX=(vw-mapWidth*scale)/2;panY=(vh-mapHeight*scale)/2;applyTransform()}function zoomCenter(f){const vw=viewport.clientWidth/2,vh=viewport.clientHeight/2,old=scale;scale=clamp(scale*f,MIN,MAX);panX=vw-(vw-panX)*(scale/old);panY=vh-(vh-panY)*(scale/old);applyTransform()}let pan=null;viewport.addEventListener('pointerdown',e=>{pan={x:e.clientX,y:e.clientY,px:panX,py:panY};viewport.classList.add('panning');viewport.setPointerCapture(e.pointerId)});viewport.addEventListener('pointermove',e=>{if(!pan)return;panX=pan.px+e.clientX-pan.x;panY=pan.py+e.clientY-pan.y;applyTransform()});viewport.addEventListener('pointerup',e=>{pan=null;viewport.classList.remove('panning');try{viewport.releasePointerCapture(e.pointerId)}catch(_){}});viewport.addEventListener('wheel',e=>{e.preventDefault();const old=scale,mx=e.clientX,my=e.clientY;scale=clamp(scale*(e.deltaY<0?1.1:1/1.1),MIN,MAX);panX=mx-(mx-panX)*(scale/old);panY=my-(my-panY)*(scale/old);applyTransform()},{passive:false});document.getElementById('zIn').onclick=()=>zoomCenter(1.15);document.getElementById('zOut').onclick=()=>zoomCenter(1/1.15);document.getElementById('zReset').onclick=fitStaticView;zoomPct.onclick=()=>{scale=1;panX=40;panY=40;applyTransform()};window.addEventListener('resize',fitStaticView);fitStaticView();`;
+  const safeTitle='MK2MD v'+APP_VERSION;
+  return `<!DOCTYPE html>
+<html lang="zh-Hant" data-mk2md-static-viewer="true">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${safeTitle}</title>
+<style>${css}</style>
+</head>
+<body>
+<div id="viewport"><div id="canvas">${snapshot}</div></div>
+<div class="badge">${safeTitle} · 靜態展示</div>
+<div class="zoombar"><button id="zOut" title="縮小">－</button><button id="zoomPct" title="重設為 100%">100%</button><button id="zIn" title="放大">＋</button><button id="zReset" title="置中縮放">⤢</button></div>
+<script>${js.replace(/<\/script/gi,'<\\/script')}<\/script>
+</body>
+</html>`;
 }
 function exportHTML(){
   flushPendingMdText();
-  if(!confirmNonMarkdownExport('HTML 單檔')) return;
+  if(!confirmNonMarkdownExport('HTML 靜態展示')) return;
   const generated=toMarkdown(roots);
   const md=(originalMarkdownText!=null && generated===savedMarkdown) ? originalMarkdownText : generated;
   const html=buildSingleFileHTML(md);
   _dl(new Blob([html],{type:'text/html;charset=utf-8'}), _expName('html'));
-  showToast('HTML 單檔已匯出');
+  showToast('HTML 靜態展示已匯出');
 }
 window.exportJPG=exportJPG; window.exportPDF=exportPDF; window.exportHTML=exportHTML;
 function createNewMindMap(){ flushPendingMdText(); if(!confirmReplace()) return; const r0=makeNode('中心主題'); roots=[r0];
@@ -4458,7 +4481,7 @@ function getCommandItems(){
     {label:'新建', hint:'檔案', aliases:'new blank', fn:createNewMindMap},
     {label:'開啟 .md', hint:'檔案', aliases:'open import markdown', fn:openMarkdownFile},
     {label:'匯出 Markdown', hint:'保存原始稿', aliases:'save export md original source', fn:exportMd},
-    {label:'匯出 HTML 單檔', hint:'備份/分享', aliases:'html export single file offline backup not source save', fn:exportHTML},
+    {label:'匯出 HTML 靜態展示', hint:'展示分享', aliases:'html export static viewer offline share not source save', fn:exportHTML},
     {label:'匯出 JPG', hint:'圖面', aliases:'image export not source save', fn:exportJPG},
     {label:'匯出 PDF', hint:'圖面', aliases:'pdf export not source save', fn:exportPDF},
     {label:'搜尋節點', hint:'檢視', aliases:'find search', fn:openSearch},
@@ -4552,7 +4575,7 @@ function buildMainMenuItems(){
     {label:'💾 匯出 .md', key:'保存原始稿', fn:exportMd},
     {label:'🖼 匯出 JPG', key:'圖面', fn:exportJPG},
     {label:'📄 匯出 PDF(A4)', key:'圖面', fn:exportPDF},
-    {label:'🌐 匯出 HTML 單檔', key:'不是原稿保存', fn:exportHTML},
+    {label:'🌐 匯出 HTML 靜態展示', key:'只供檢視', fn:exportHTML},
     {label:'⚙ 匯出前檢查設定', sub:buildPreExportCheckMenu()},
   ];
   const viewSub = [
@@ -5198,7 +5221,7 @@ function runInteractionSelfTest(options={}){
     add('未匯出狀態提示手動匯出', saveStateEl.classList.contains('dirty') && /請匯出 Markdown/.test(saveInfoEl.textContent||''), saveInfoEl.textContent);
     let confirmMessage='';
     window.confirm=msg=>{ confirmMessage=String(msg||''); return false; };
-    add('非 Markdown 匯出會提醒不是原稿保存', confirmNonMarkdownExport('HTML 單檔')===false && /不會保存原始 Markdown/.test(confirmMessage), confirmMessage);
+    add('非 Markdown 匯出會提醒不是原稿保存', confirmNonMarkdownExport('HTML 靜態展示')===false && /不會保存原始 Markdown/.test(confirmMessage), confirmMessage);
     savedMarkdown=toMarkdown(roots);
     lastExportAt=new Date().toISOString();
     refreshSaveState();
@@ -5381,9 +5404,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.82'
-      && APP_DATE === '2026-07-20'
-      && APP_TITLE === 'MK2MD v10.82'
+      && APP_VERSION === '10.83'
+      && APP_DATE === '2026-07-25'
+      && APP_TITLE === 'MK2MD v10.83'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
@@ -5414,8 +5437,8 @@ function runCommandPaletteSelfTest(options={}){
     setTrustedHTML(markupProbe,'<strong>保留</strong><scr'+'ipt>window.__bad=1</scr'+'ipt><img src="javascript:alert(1)" onerror="window.__bad=2">','sanitizer self test');
     add('HTML 白名單會移除危險標籤、事件與 URL', !!markupProbe.querySelector('strong') && !markupProbe.querySelector('script') && !markupProbe.querySelector('[onerror]') && !markupProbe.querySelector('img[src^="javascript:"]'), markupProbe.innerHTML);
     add('命令清單有基本項目', commands.length>=15, String(commands.length));
-    add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 單檔'), commands.map(c=>c.label).join(','));
-    add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 單檔' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
+    add('命令清單包含檔案功能', commands.some(c=>c.label==='匯出 Markdown') && commands.some(c=>c.label==='匯出 PDF') && commands.some(c=>c.label==='匯出 HTML 靜態展示'), commands.map(c=>c.label).join(','));
+    add('命令清單標明 Markdown 是原始稿保存', commands.some(c=>c.label==='匯出 Markdown' && c.hint==='保存原始稿') && commands.some(c=>c.label==='匯出 HTML 靜態展示' && /not source save/.test(c.aliases||'')), commands.map(c=>c.label+':'+(c.hint||'')).join(','));
     add('命令清單包含診斷功能', commands.some(c=>c.label==='完整自檢') && commands.some(c=>c.label==='命令面板自檢') && commands.some(c=>c.label==='HTML 單檔自檢') && commands.some(c=>c.label==='大型 Markdown 自檢') && commands.some(c=>c.label==='右鍵選單自檢') && commands.some(c=>c.label==='搜尋體驗自檢') && commands.some(c=>c.label==='鍵盤操作自檢') && commands.some(c=>c.label==='自檢報告'), commands.map(c=>c.label).join(','));
     const menu=buildMainMenuItems();
     const fileSub=menu.fileSub||[];
@@ -5860,7 +5883,7 @@ Setext H2 寫法
 - 大型檔案保護:貼入很多行 Markdown 時,同步會自動放慢,避免每打一字就卡住
 ## 💾 匯出與檔案
 - 匯出 .md:右鍵 → 檔案 → 匯出(或 Ctrl+S),這才是保存原始 Markdown 原稿
-- 匯出 HTML 單檔:右鍵 → 檔案 → 匯出 HTML 單檔,可離線開啟完整工具,但不是原稿保存
+- 匯出 HTML 靜態展示:右鍵 → 檔案 → 匯出 HTML 靜態展示,可離線展示目前心智圖,只保留平移、縮放與置中,不是原稿保存
 - 匯出 JPG:右鍵 → 檔案 → 匯出 JPG,整張圖的高解析圖片;未保存時會先提醒
 - 匯出 PDF:右鍵 → 檔案 → 匯出 PDF,整張圖縮放置入單張 A4;未保存時會先提醒
 - 匯出前檢查:匯出 .md 前會提醒空標題、過長節點、未閉合程式碼區塊與表格欄位問題

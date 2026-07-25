@@ -10,8 +10,8 @@ https://green-tea-king.github.io/md-mind-map/
 
 ## Current Version
 
-- Version: `v10.82`
-- Date: `2026-07-20`
+- Version: `v10.83`
+- Date: `2026-07-25`
 - Tracked app file: `index.html`
 
 ## Main Features
@@ -21,7 +21,7 @@ https://green-tea-king.github.io/md-mind-map/
 - 右鍵選單、指令面板、搜尋與定位
 - Markdown 標題、清單、引用、表格、程式碼、警示框、腳註；清單操作使用切換語意，圖示操作分開加圖示與清除，分隔線操作明確標示節點上方/下方，剪貼簿操作分開複製貼上與危險操作，警示框與跳脫符號可由節點右鍵文字格式套用
 - `---` 水平分隔線支援，顯示為單純分隔線，不當成子節點
-- JPG、PDF、Markdown、HTML 單檔匯出；JPG/PDF 會依目前模式保留 HTML 純文字框或安全顯示的 summary、段落、清單與行內格式
+- JPG、PDF、Markdown、HTML 靜態展示匯出；HTML 檔只保留平移、縮放與置中檢視，不保留編輯、儲存或再次匯出功能；JPG/PDF 會依目前模式保留 HTML 純文字框或安全顯示的 summary、段落、清單與行內格式
 - 內建範本包含 HTML details 區塊;預設純文字,可切換白名單安全顯示
 - 匯出前檢查報告與安全修正
 
@@ -30,7 +30,7 @@ https://green-tea-king.github.io/md-mind-map/
 本工具採手動保存流程。
 
 - 編修內容不使用自動草稿
-- 離開頁面前請手動匯出 Markdown 或 HTML 單檔
+- 離開頁面前請手動匯出 Markdown；HTML 只適合靜態展示分享
 - 取消舊草稿復原流程後，不再使用 `mm-auto-draft-v1`
 
 ## Deployment
@@ -41,7 +41,7 @@ GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會�
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v10.82
+# Deploy v10.83
 .\deploy.ps1 -ExpectedHead $head
 ```
 
