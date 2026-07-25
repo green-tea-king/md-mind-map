@@ -71,6 +71,10 @@ Test-Case 'production git child processes use explicit git-dir work-tree and per
   Assert-True ($source -match '(?s)function Invoke-RepositoryNative.*?\$attempt -le \$script:GitNativeMaxAttempts') `
     'production git commands do not retry transient repository read failures within the bounded budget'
 }
+Test-Case 'repository node and pwsh child processes use a stable local working directory' {
+  Assert-True ($source -match '(?s)if \(\$FilePath -in @\(''node'', ''pwsh''\)\).*?Invoke-InProcessNative.*?-WorkingDirectory \(Get-StableProcessWorkingDirectory\)') `
+    'repository node and pwsh child processes still use the WebDAV repository as their working directory'
+}
 Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
   Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `
     'child-process path normalizer is missing'

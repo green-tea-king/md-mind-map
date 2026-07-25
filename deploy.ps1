@@ -156,7 +156,7 @@ function Invoke-RepositoryNative {
       for ($attempt = 1; $attempt -le $script:GitNativeMaxAttempts; $attempt++) {
         try {
           return Invoke-InProcessNative -FilePath $FilePath -Arguments $Arguments `
-            -WorkingDirectory $Repo -AllowedExitCodes $AllowedExitCodes
+            -WorkingDirectory (Get-StableProcessWorkingDirectory) -AllowedExitCodes $AllowedExitCodes
         } catch {
           if ($attempt -ge $script:GitNativeMaxAttempts) { throw }
           Start-Sleep -Milliseconds (200 * $attempt)
