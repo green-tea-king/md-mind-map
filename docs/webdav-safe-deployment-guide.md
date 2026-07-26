@@ -145,6 +145,15 @@ for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
 
 ## 8. 驗證清單
 
+若專案提供外層啟動器，正式部署優先使用它：
+
+```powershell
+$head = (git rev-parse HEAD).Trim()
+.\scripts\start-deploy.ps1 -ExpectedHead $head
+```
+
+啟動器應從本機 Temp cwd 呼叫真正的部署腳本，並只對腳本啟動階段的暫時性錯誤做有限重試；真正的測試、push 或正式站錯誤不可無限重跑。
+
 修改後至少執行：
 
 ```powershell

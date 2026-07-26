@@ -41,13 +41,13 @@ GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會�
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v10.90
-.\deploy.ps1 -ExpectedHead $head
+# Deploy v10.91 through the WebDAV-safe launcher
+.\scripts\start-deploy.ps1 -ExpectedHead $head
 ```
 
 `deploy.ps1` 是納入版本控制的 fail-closed 工具，但不會被放進 GitHub Pages artifact。它不會自動 commit；正式模式只接受已提交的精確 HEAD，確認原 repository／branch／remote 關係後才 push，並要求同一 HEAD 的 Actions run、正式站來源 SHA-256 與 Chrome 11/11 都通過。
 
-可先執行 `.\deploy.ps1 -DryRun`，只跑本機版本、Git、來源與 Chrome 閘門，不 push、不等待 Actions，也不驗證正式站。
+可先執行 `.\scripts\start-deploy.ps1 -DryRun`，只跑本機版本、Git、來源與 Chrome 閘門，不 push、不等待 Actions，也不驗證正式站。`deploy.ps1` 仍是實際部署工具；`start-deploy.ps1` 負責在 WebDAV 瞬斷時從本機 Temp cwd 重試啟動。
 
 ## Local Files
 

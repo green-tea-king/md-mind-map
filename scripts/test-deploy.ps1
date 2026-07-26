@@ -85,6 +85,18 @@ Test-Case 'repository node scripts use explicit paths after leaving the WebDAV c
   Assert-True ($source -match '(?s)if \(\$FilePath -in @\(''node'', ''pwsh''\)\).*?\$childArguments = @\(\$Arguments\).*?Invoke-InProcessNative -FilePath \$FilePath -Arguments \$childArguments') `
     'repository node scripts still rely on a relative path after using a stable cwd'
 }
+Test-Case 'WebDAV deployment launcher retries outer script startup from a stable cwd' {
+  $launcherPath = Join-Path $repo 'scripts/start-deploy.ps1'
+  Assert-True (Test-Path -LiteralPath $launcherPath -PathType Leaf) `
+    'WebDAV deployment launcher is missing'
+  $launcher = Get-Content -Raw -Encoding UTF8 $launcherPath
+  Assert-True ($launcher.Contains('Get-StableProcessWorkingDirectory')) `
+    'WebDAV deployment launcher does not use a stable local working directory'
+  Assert-True ($launcher.Contains('Start-Sleep -Milliseconds')) `
+    'WebDAV deployment launcher has no bounded startup retry'
+  Assert-True ($launcher.Contains('-ExpectedHead')) `
+    'WebDAV deployment launcher does not forward ExpectedHead'
+}
 Test-Case 'local HTTP server normalizes mapped repository paths for child processes' {
   Assert-True ($source.Contains('function Resolve-ChildProcessPath')) `
     'child-process path normalizer is missing'

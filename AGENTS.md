@@ -1,6 +1,6 @@
 # MK2MD 專案維護規範
 
-本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.90`（`2026-07-25`）。預設使用台灣繁體中文協作。
+本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v10.91`（`2026-07-26`）。預設使用台灣繁體中文協作。
 
 ## 1. 工作範圍與優先順序
 
@@ -97,6 +97,7 @@
 - commit 前執行 `git diff --cached --check` 與 `git diff --cached --name-only`。
 - 不覆蓋、不 reset、不 checkout 使用者既有變更。
 - `deploy.ps1` 是受版本控制的 fail-closed 部署工具；正式部署先取得 `$head = (git rev-parse HEAD).Trim()`，再執行 `.\deploy.ps1 -ExpectedHead $head`，不得以工具自動 commit。
+- WebDAV 環境正式啟動優先使用 `scripts/start-deploy.ps1`；它只負責以本機 Temp cwd 有限重試啟動 `deploy.ps1`，不得繞過部署工具的 fail-closed 閘門。
 - `deploy.ps1 -DryRun` 只執行本機閘門，不 push、不等待 Actions、不驗證正式站；正式模式必須綁定精確 HEAD 的 Actions run、正式站來源雜湊與 Chrome 11/11 結果。
 - `deploy.ps1` 納入 Git 後，仍保留六個未追蹤本機檔案：`BACKUP_MANIFEST.md`、`MD心智圖_v10_00.html`、`agent.md`、`clear-auto-draft.html`、`design.md`、`repository-history.bundle`；不得自行清理、stage 或修改。
 
