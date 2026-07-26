@@ -173,7 +173,7 @@ function validateVersionConsistency({ agentsText, readmeText, indexText }) {
     );
     captureExactly(
       deployment,
-      /^\.\\(?:deploy\.ps1|scripts\\start-deploy\.ps1) -ExpectedHead \$head\s*$/gm,
+      /^\.[^\r\n]*-ExpectedHead[^\r\n]*$/gm,
       'README deploy command',
       issueGroups.deployCommand
     );

@@ -10,7 +10,7 @@ https://green-tea-king.github.io/md-mind-map/
 
 ## Current Version
 
-- Version: `v10.92`
+- Version: `v10.93`
 - Date: `2026-07-26`
 - Tracked app file: `index.html`
 
@@ -41,7 +41,7 @@ GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會�
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v10.92 through the WebDAV-safe launcher
+# Deploy v10.93
 .\scripts\start-deploy.ps1 -ExpectedHead $head
 ```
 
