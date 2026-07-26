@@ -127,6 +127,16 @@ test('rejects the legacy deploy Message command structure', () => {
   assert.match(issueFor(result, 'README deploy command').actual, /0 matches/);
 });
 
+test('accepts the WebDAV-safe deployment launcher command', () => {
+  const sources = consistentSources();
+  sources.readmeText = sources.readmeText.replace(
+    '.\\deploy.ps1 -ExpectedHead $head',
+    '.\\scripts\\start-deploy.ps1 -ExpectedHead $head'
+  );
+  const result = validateVersionConsistency(sources);
+  assert.equal(result.ok, true);
+});
+
 test('reports a newest Changelog mismatch without reading old history as current', () => {
   const sources = consistentSources();
   sources.indexText = sources.indexText.replace('2026-07-17 v10.76：加入', '2026-07-17 v10.74：加入');

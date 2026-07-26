@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.91
-  Last updated: 2026-07-25
+  Version: v10.92
+  Last updated: 2026-07-26
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-26 v10.92：修正版本一致性閘門支援 WebDAV 安全部署啟動器，並同步今日版本日期，避免 GitHub Actions 因日期或部署命令格式漂移而停止。
   - 2026-07-26 v10.91：新增 WebDAV 安全部署啟動器，從本機 Temp cwd 有限重試啟動 deploy.ps1，降低外層腳本啟動時的 Permission denied 與路徑不可讀噪音。
   - 2026-07-25 v10.90：新增可移植的 Windows WebDAV 安全 Git／部署維護指南，整理穩定 cwd、有限重試、明確腳本路徑與驗證規則。
   - 2026-07-25 v10.89：修正部署工具在本機 Temp cwd 下執行 Node／PowerShell 檢查時的相對腳本路徑，改用明確專案路徑，避免找不到檔案。
@@ -740,9 +741,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.91';
+const APP_VERSION = '10.92';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-25';
+const APP_DATE = '2026-07-26';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -5412,9 +5413,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.91'
-      && APP_DATE === '2026-07-25'
-      && APP_TITLE === 'MK2MD v10.91'
+      && APP_VERSION === '10.92'
+      && APP_DATE === '2026-07-26'
+      && APP_TITLE === 'MK2MD v10.92'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
