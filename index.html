@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.93
-  Last updated: 2026-07-26
+  Version: v10.94
+  Last updated: 2026-07-29
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-29 v10.94：修正 SVG 水平分隔線的百分比座標被安全清理器移除，恢復 Markdown `---` 的完整線段顯示。
   - 2026-07-26 v10.93：修正版本一致性閘門與 WebDAV launcher 的 README 部署範例格式，確保 GitHub Actions 能正確辨識目前部署命令。
   - 2026-07-26 v10.92：修正版本一致性閘門支援 WebDAV 安全部署啟動器，並同步今日版本日期，避免 GitHub Actions 因日期或部署命令格式漂移而停止。
   - 2026-07-26 v10.91：新增 WebDAV 安全部署啟動器，從本機 Temp cwd 有限重試啟動 deploy.ps1，降低外層腳本啟動時的 Permission denied 與路徑不可讀噪音。
@@ -742,9 +743,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.93';
+const APP_VERSION = '10.94';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-26';
+const APP_DATE = '2026-07-29';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -914,7 +915,7 @@ const SAFE_HTML_ATTRS=new Set(['class','href','title','rel','alt','src','loading
 const SAFE_SVG_ATTRS=new Set(['class','aria-hidden','preserveaspectratio','x','y','x1','y1','x2','y2','cx','cy','r','width','height','d','fill','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','style']);
 function safeSvgAttribute(name,value){
   const v=String(value||'').trim();
-  if(['x','y','x1','y1','x2','y2','cx','cy','r','width','height','stroke-width','stroke-dashoffset'].includes(name)) return /^-?[0-9.]+$/.test(v);
+  if(['x','y','x1','y1','x2','y2','cx','cy','r','width','height','stroke-width','stroke-dashoffset'].includes(name)) return /^-?[0-9.]+%?$/.test(v);
   if(name==='d') return /^[0-9A-Za-z .,+()\-]+$/.test(v);
   if(name==='stroke-dasharray') return /^[0-9. ,]+$/.test(v);
   if(name==='stroke-linecap') return /^(round|butt|square)$/.test(v);
@@ -3151,6 +3152,8 @@ code block
     add('匯出支援清單沒有遺漏目前節點類型', audit.unsupported.length===0, audit.unsupported.join(',')||'ok');
     add('匯出能力稽核會辨識 Markdown HTML 區塊', audit.used.includes('Markdown HTML 區塊'), audit.used.join(','));
     add('測試圖含分隔線與表格 DOM', !!canvas.querySelector('.node.hrnode') && !!canvas.querySelector('table.mdtable'), 'hr/table');
+    const hrLine=canvas.querySelector('.node.hrnode .mdhrline');
+    add('SVG 水平分隔線保留百分比終點', !!(hrLine && hrLine.getAttribute('x2')==='100%'), hrLine&&hrLine.getAttribute('x2'));
     const cv=renderMapToCanvas({skipRender:true});
     add('Canvas 匯出尺寸合理', !!(cv && cv.width>80 && cv.height>80 && cv._mmScaleFactor>0), cv?`${cv.width}x${cv.height}@${cv._mmScaleFactor}`:'no canvas');
     const bg=_canvasBackgroundRgb(cv);
@@ -5414,9 +5417,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.93'
-      && APP_DATE === '2026-07-26'
-      && APP_TITLE === 'MK2MD v10.93'
+      && APP_VERSION === '10.94'
+      && APP_DATE === '2026-07-29'
+      && APP_TITLE === 'MK2MD v10.94'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
