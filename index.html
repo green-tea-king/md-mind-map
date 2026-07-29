@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.95
+  Version: v10.96
   Last updated: 2026-07-29
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-29 v10.96：移除水平分隔線的圓圈拖曳符號，保留靠近時的淺藍提示底色與整條線拖曳功能。
   - 2026-07-29 v10.95：隱藏水平分隔線平時常駐的拖曳握把，僅在滑鼠移入或選取分隔線時顯示，避免畫面多出圓圈。
   - 2026-07-29 v10.94：修正 SVG 水平分隔線的百分比座標被安全清理器移除，恢復 Markdown `---` 的完整線段顯示。
   - 2026-07-26 v10.93：修正版本一致性閘門與 WebDAV launcher 的 README 部署範例格式，確保 GitHub Actions 能正確辨識目前部署命令。
@@ -630,9 +631,6 @@
   .node.hrnode .ntext{ display:block; width:100%; height:14px; white-space:normal; }
   .node.hrnode .mdhr{ display:block; width:100%; height:14px; opacity:.9; margin:0; overflow:visible; }
   .node.hrnode .mdhrline{ stroke:currentColor; stroke-width:var(--hrw,2px); stroke-linecap:round; stroke-dasharray:6 6; animation:hr-flow 1.5s linear infinite; }
-  .node.hrnode .hrhandle{ opacity:0; fill:#fff; stroke:currentColor; stroke-width:2; transition:opacity .12s ease, transform .12s ease; }
-  .node.hrnode .hrhandleGrip{ stroke:currentColor; stroke-width:1.6; stroke-linecap:round; opacity:.7; }
-  .node.hrnode:hover .hrhandle,.node.hrnode.sel .hrhandle{ opacity:1; transform:translateX(2px); }
   .node.hrnode:hover .mdhrline,.node.hrnode.sel .mdhrline{ stroke-width:calc(var(--hrw,2px) + .8px); }
   @keyframes hr-flow{ from{stroke-dashoffset:0;} to{stroke-dashoffset:-12;} }
   .node.lv0.hrnode{ --hrw:3px; }
@@ -744,7 +742,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.95';
+const APP_VERSION = '10.96';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-07-29';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -2179,7 +2177,7 @@ function render(){
       const bd=document.createElement('span'); bd.className='albody'; setTrustedHTML(bd, n.title? inlineMd(n.title):' ', 'alert body');
       tx.appendChild(ti); tx.appendChild(bd);
     }
-    else if(n.kind==='hr'){ setTrustedHTML(tx, '<svg class="mdhr" aria-hidden="true" preserveAspectRatio="none"><line class="mdhrline" x1="0" y1="7" x2="100%" y2="7"/><g class="hrhandle"><circle cx="9" cy="7" r="6"/><line class="hrhandleGrip" x1="7" y1="4.5" x2="7" y2="9.5"/><line class="hrhandleGrip" x1="11" y1="4.5" x2="11" y2="9.5"/></g></svg>', 'markdown horizontal rule svg'); d.classList.add('hrnode'); d.title='Markdown 水平分隔線: '+(n.title||'---')+'；可抓左側握把拖曳排序'; }
+    else if(n.kind==='hr'){ setTrustedHTML(tx, '<svg class="mdhr" aria-hidden="true" preserveAspectRatio="none"><line class="mdhrline" x1="0" y1="7" x2="100%" y2="7"/></svg>', 'markdown horizontal rule svg'); d.classList.add('hrnode'); d.title='Markdown 水平分隔線: '+(n.title||'---')+'；可直接拖曳水平線排序'; }
     else if(n.kind==='html' || n.htmlRaw){ tx.classList.add('hashtml'); d.classList.add('htmlnode'); renderHtmlBlockContent(tx, n.htmlRaw||n.code||''); d.title='Markdown HTML 區塊：'+(htmlDisplayMode===HTML_DISPLAY_MODES.safe?'白名單安全顯示':'純文字顯示'); }
     else if(n.table){ tx.classList.add('hastable'); setTrustedHTML(tx, tableHtml(n.table), 'markdown table'); d.classList.add('tablenode'); }
     else if(n.code!=null){ tx.classList.add('hascode'); setTrustedHTML(tx, '<pre class="mdpre"><code>'+escHtml(n.code)+'</code></pre>', 'markdown code block'); d.classList.add('codenode'); }
@@ -5255,9 +5253,7 @@ function runInteractionSelfTest(options={}){
     const hrRect=hrDom&&hrDom.getBoundingClientRect();
     const hitDom=hrRect&&findHrHitNodeDom(hrRect.left+12, hrRect.top+hrRect.height+10);
     add('低縮放分隔線有螢幕像素拖曳熱區', !!(hitDom && hitDom===hrDom), hitDom&&hitDom.dataset.id);
-    const hrHandle=hrDom&&hrDom.querySelector('.hrhandle');
-    add('水平分隔線拖曳握把預設隱藏', !!(hrHandle && getComputedStyle(hrHandle).opacity==='0'), hrHandle&&getComputedStyle(hrHandle).opacity);
-    add('水平分隔線保留拖曳握把互動', !!(hrDom && hrHandle && /握把拖曳/.test(hrDom.title||'')), hrDom&&hrDom.title);
+    add('水平分隔線不顯示額外拖曳符號', !!(hrDom && !hrDom.querySelector('.hrhandle') && /直接拖曳水平線/.test(hrDom.title||'')), hrDom&&hrDom.title);
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -5420,9 +5416,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.95'
+      && APP_VERSION === '10.96'
       && APP_DATE === '2026-07-29'
-      && APP_TITLE === 'MK2MD v10.95'
+      && APP_TITLE === 'MK2MD v10.96'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
