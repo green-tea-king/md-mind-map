@@ -247,6 +247,13 @@ function Resolve-RemoteRelation {
   return 'diverged'
 }
 
+function Resolve-TrackingRefState {
+  param([string]$TrackingHead, [string]$RemoteHead)
+  if (-not $TrackingHead) { return 'unavailable' }
+  if ($TrackingHead -eq $RemoteHead) { return 'current' }
+  return 'stale'
+}
+
 function Assert-ExpectedHead {
   param([string]$Actual, [string]$Expected, [Alias('IsDryRun')][bool]$DryRun)
   if ($DryRun) { return }
@@ -1182,6 +1189,11 @@ process.stdout.write(JSON.stringify({version,date}));
       $remoteIdentity.FetchUrl,
       "$($script:ExpectedBranch):refs/remotes/origin/$($script:ExpectedBranch)"
     ) -Repo $Repo)
+  $trackingProbe = Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('rev-parse', '--verify', "refs/remotes/origin/$($script:ExpectedBranch)") `
+    -Repo $Repo -AllowedExitCodes @(0, 128)
+  $trackingHead = if ($trackingProbe.ExitCode -eq 0) { $trackingProbe.StdOut.Trim().ToLowerInvariant() } else { '' }
+  $trackingState = Resolve-TrackingRefState -TrackingHead $trackingHead -RemoteHead $remoteHead
   $head = (Invoke-RepositoryNative -Native $Native -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
 
   $remoteAncestor = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
@@ -1210,6 +1222,8 @@ process.stdout.write(JSON.stringify({version,date}));
     PushUrl = $remoteIdentity.PushUrl
     Head = $head
     RemoteHead = $remoteHead
+    TrackingHead = $trackingHead
+    TrackingState = $trackingState
     Relation = $relation
     Version = $version
     Date = $date
@@ -1668,6 +1682,7 @@ function Invoke-Mk2mdDeployment {
   Write-Host "MK2MD v$($context.Version) ($($context.Date))"
   Write-Host "HEAD: $($context.Head)"
   Write-Host "origin/master: $($context.RemoteHead) [$($context.Relation)]"
+  Write-Host "local origin/master tracking: $($context.TrackingHead) [$($context.TrackingState)]"
   foreach ($commit in @($context.Commits)) { Write-Host "commit: $commit" }
   foreach ($path in @($context.ChangedPaths)) { Write-Host "path: $path" }
 

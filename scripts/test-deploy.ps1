@@ -262,6 +262,12 @@ Test-Case 'remote relation matrix is stable' {
   Assert-True ((Resolve-RemoteRelation 'a' 'b' $false $false) -eq 'diverged') 'diverged failed'
 }
 
+Test-Case 'local origin tracking ref diagnosis does not confuse it with the verified remote' {
+  Assert-True ((Resolve-TrackingRefState -TrackingHead ('a' * 40) -RemoteHead ('a' * 40)) -eq 'current') 'matching tracking ref was not current'
+  Assert-True ((Resolve-TrackingRefState -TrackingHead ('b' * 40) -RemoteHead ('a' * 40)) -eq 'stale') 'different tracking ref was not stale'
+  Assert-True ((Resolve-TrackingRefState -TrackingHead '' -RemoteHead ('a' * 40)) -eq 'unavailable') 'missing tracking ref was not unavailable'
+}
+
 Test-Case 'repository slug parser accepts HTTPS SCP-like and SSH URLs' {
   $urls = @(
     'https://github.com/green-tea-king/md-mind-map.git',
@@ -298,6 +304,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
     SnapshotDrift = $false
     ContractExit = 0
     ContractTimeout = $false
+    TrackingRefExit = 0
   }
   foreach ($key in $Scenario.Keys) { $settings[$key] = $Scenario[$key] }
 
@@ -323,6 +330,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       '^gh api repos/green-tea-king/md-mind-map --jq \.permissions\.push$' { 'gh:permission'; break }
       '^git ls-remote https://github\.com/green-tea-king/md-mind-map\.git refs/heads/master$' { 'git:ls-remote'; break }
       '^git fetch --no-tags https://github\.com/green-tea-king/md-mind-map\.git master:refs/remotes/origin/master$' { 'git:fetch'; break }
+      '^git rev-parse --verify refs/remotes/origin/master$' { 'git:tracking-head'; break }
       '^git rev-parse HEAD$' { 'git:head'; break }
       '^git merge-base --is-ancestor ' { if ($arguments[2] -eq $remoteHead) { 'git:remote-ancestor' } else { 'git:local-ancestor' }; break }
       '^git log --format=%H %s ' { 'git:log'; break }
@@ -355,6 +363,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       'gh:auth' { $exitCode = [int]$settings.AuthExit; ''; break }
       'gh:permission' { [string]$settings.PushPermission; break }
       'git:ls-remote' { "$remoteHead`trefs/heads/master"; break }
+      'git:tracking-head' { $exitCode = [int]$settings.TrackingRefExit; if ($exitCode -eq 0) { $remoteHead } else { '' }; break }
       'git:head' { $head; break }
       'git:remote-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'local-ahead')) { 0 } else { 1 }; ''; break }
       'git:local-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'remote-ahead')) { 0 } else { 1 }; ''; break }
@@ -399,10 +408,11 @@ Test-Case 'production repository preflight executes the exact checked command se
   Assert-True ($context.FetchUrl -eq 'https://github.com/green-tea-king/md-mind-map.git') 'exact fetch URL was not retained'
   Assert-True ($context.PushUrl -eq 'https://github.com/green-tea-king/md-mind-map.git') 'exact push URL was not retained'
   Assert-True ($context.OriginSlug -eq 'green-tea-king/md-mind-map') 'exact repository slug was not retained'
+  Assert-True ($context.TrackingHead -eq $fixture.RemoteHead -and $context.TrackingState -eq 'current') 'tracking ref diagnosis was not retained'
   $expected = @(
     'git:branch', 'git:fetch-url', 'git:push-url', 'git:working-diff', 'git:staged-diff', 'git:status',
     'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'pwsh:contract', 'gh:auth', 'gh:permission',
-    'git:ls-remote', 'git:fetch', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
+    'git:ls-remote', 'git:fetch', 'git:tracking-head', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
     'git:log', 'git:changed-paths', 'snapshot:2'
   )
   $actual = @($fixture.Calls | ForEach-Object Key)
@@ -419,6 +429,13 @@ Test-Case 'production repository preflight executes the exact checked command se
     'design.md' = 'hash:design.md'
     'repository-history.bundle' = 'hash:repository-history.bundle'
   })
+}
+
+Test-Case 'production preflight reports an unavailable local tracking ref without replacing remote evidence' {
+  $fixture = New-ProductionPreflightFixture @{ TrackingRefExit = 128 }
+  $context = Get-RepositoryContext -Repo 'fixture' -Native $fixture.Native -SnapshotProvider $fixture.SnapshotProvider
+  Assert-True ($context.TrackingState -eq 'unavailable' -and $context.TrackingHead -eq '') 'unavailable tracking ref was not reported'
+  Assert-True ($context.RemoteHead -eq $fixture.RemoteHead -and $context.Relation -eq 'local-ahead') 'remote evidence changed when tracking ref was unavailable'
 }
 
 Test-Case 'production preflight runs the full contract suite before external probes and fails closed' {
@@ -938,6 +955,8 @@ function New-TestRepositoryContext([string]$Relation) {
     PushUrl = 'https://github.com/green-tea-king/md-mind-map.git'
     Head = $testHead
     RemoteHead = if ($Relation -eq 'equal') { $testHead } else { $testRemote }
+    TrackingHead = if ($Relation -eq 'equal') { $testHead } else { $testRemote }
+    TrackingState = 'current'
     Relation = $Relation
     Version = '10.77'
     Date = '2026-07-17'

@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.97
-  Last updated: 2026-07-29
+  Version: v10.98
+  Last updated: 2026-07-30
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-07-30 v10.98：部署前明確診斷本機 origin/master 追蹤 ref 與已驗證遠端 SHA 的差異；補齊水平線與靜態 HTML 匯出 2px／無拖曳符號防回歸自檢。
   - 2026-07-29 v10.97：統一所有心智圖節點外框、分支線、水平分隔線與表格格線粗細，避免不同層級視覺不一致。
   - 2026-07-29 v10.96：移除水平分隔線的圓圈拖曳符號，保留靠近時的淺藍提示底色與整條線拖曳功能。
   - 2026-07-29 v10.95：隱藏水平分隔線平時常駐的拖曳握把，僅在滑鼠移入或選取分隔線時顯示，避免畫面多出圓圈。
@@ -735,9 +736,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.97';
+const APP_VERSION = '10.98';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-29';
+const APP_DATE = '2026-07-30';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -3235,6 +3236,7 @@ This content must survive single-file HTML export.
     add('HTML 靜態展示標記存在', html.includes('data-mk2md-static-viewer="true"'), 'static marker');
     add('HTML 靜態展示不保留編輯器功能', !/exportHTML|exportMd|mdPanel|cmdPalette|runTemplateSelfTest|DEFAULT_MARKDOWN/.test(html), 'no editor code');
     add('HTML 靜態展示保留檢視互動', /function applyTransform/.test(html) && /wheel/.test(html) && /pointerdown/.test(html) && /fitStaticView/.test(html), 'pan zoom fit');
+    add('HTML 靜態展示同步水平線與單元線寬規則', /--unit-line-width:2px/.test(html) && /\.mdhrline\{[^}]*stroke-width:var\(--unit-line-width\)/.test(html) && !/hrhandle/.test(html), '2px / no hr handle');
     add('HTML 靜態展示已跳脫 script 結尾字串', html.includes('Literal closing tag: &lt;/script&gt;') && !html.includes('Literal closing tag: '+closingTag), 'script boundary');
     const openingTag='<'+ 'script>';
     const scriptStart=html.lastIndexOf(openingTag), scriptEnd=html.lastIndexOf(closingTag);
@@ -5411,9 +5413,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.97'
-      && APP_DATE === '2026-07-29'
-      && APP_TITLE === 'MK2MD v10.97'
+      && APP_VERSION === '10.98'
+      && APP_DATE === '2026-07-30'
+      && APP_TITLE === 'MK2MD v10.98'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
