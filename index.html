@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.99
+  Version: v11.00
   Last updated: 2026-08-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-02 v11.00：部署工具在遠端 SHA 已驗證時容許本機 origin/master 追蹤 ref 暫時不可讀，維持遠端、分支、工作樹與精確 HEAD 的 fail-closed 檢查。
   - 2026-08-02 v10.99：檔案置入提示僅在真正拖入檔案時顯示，避免背景平移或節點拖曳被誤判為置入新檔案；新增檔案／非檔案拖曳防回歸自檢。
   - 2026-07-30 v10.98：部署前明確診斷本機 origin/master 追蹤 ref 與已驗證遠端 SHA 的差異；補齊水平線與靜態 HTML 匯出 2px／無拖曳符號防回歸自檢。
   - 2026-07-29 v10.97：統一所有心智圖節點外框、分支線、水平分隔線與表格格線粗細，避免不同層級視覺不一致。
@@ -737,7 +738,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.99';
+const APP_VERSION = '11.00';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-08-02';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5438,9 +5439,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.99'
+      && APP_VERSION === '11.00'
       && APP_DATE === '2026-08-02'
-      && APP_TITLE === 'MK2MD v10.99'
+      && APP_TITLE === 'MK2MD v11.00'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

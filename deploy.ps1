@@ -1254,8 +1254,9 @@ function Get-RepositoryState {
     -Arguments @('rev-parse', 'HEAD') -Repo $Repo).StdOut.Trim().ToLowerInvariant()
   $localMasterHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('rev-parse', "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
-  $originHead = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @('rev-parse', "refs/remotes/origin/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim().ToLowerInvariant()
+  $originProbe = Invoke-RepositoryNative -Native $Native -FilePath 'git' `
+    -Arguments @('rev-parse', "refs/remotes/origin/$($script:ExpectedBranch)") -Repo $Repo -AllowedExitCodes @(0, 128)
+  $originHead = if ($originProbe.ExitCode -eq 0) { $originProbe.StdOut.Trim().ToLowerInvariant() } else { '' }
   $remoteLine = (Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('ls-remote', $remoteIdentity.FetchUrl, "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
   if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable during final verification." }
@@ -1336,16 +1337,17 @@ function Assert-PrePushRepositoryState {
     if ([string]$State.RemoteHead -ne [string]$Initial.Head) {
       throw "Pre-push repository RemoteHead '$($State.RemoteHead)' does not equal expected remote HEAD '$($Initial.Head)'."
     }
-    if ([string]$State.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+    if ($State.OriginHead -and [string]$State.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
       throw "Pre-push repository OriginHead '$($State.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and expected HEAD '$($Initial.Head)'."
     }
     return
   }
 
-  foreach ($property in @('OriginHead', 'RemoteHead')) {
-    if ([string]$State.$property -ne [string]$Initial.RemoteHead) {
-      throw "Pre-push repository $property '$($State.$property)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
-    }
+  if ([string]$State.RemoteHead -ne [string]$Initial.RemoteHead) {
+    throw "Pre-push repository RemoteHead '$($State.RemoteHead)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
+  }
+  if ($State.OriginHead -and [string]$State.OriginHead -ne [string]$Initial.RemoteHead) {
+    throw "Pre-push repository OriginHead '$($State.OriginHead)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
   }
 }
 
@@ -1374,12 +1376,12 @@ function Invoke-ExactHeadPush {
         "remote=$($uncertainState.RemoteHead); fetchUrl=$($uncertainState.FetchUrl); " +
         "pushUrl=$($uncertainState.PushUrl); protectedHashes=$($uncertainState.ProtectedHashes.Count)"
       if ([string]$uncertainState.RemoteHead -eq [string]$Initial.Head) {
-        if ([string]$uncertainState.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+        if ($uncertainState.OriginHead -and [string]$uncertainState.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
           throw "origin/master '$($uncertainState.OriginHead)' is inconsistent with the verified remote HEAD."
         }
         $evidence = "push outcome uncertain but remote verified; $stateEvidence"
       } elseif ([string]$uncertainState.RemoteHead -eq [string]$Initial.RemoteHead) {
-        if ([string]$uncertainState.OriginHead -ne [string]$Initial.RemoteHead) {
+        if ($uncertainState.OriginHead -and [string]$uncertainState.OriginHead -ne [string]$Initial.RemoteHead) {
           throw "origin/master '$($uncertainState.OriginHead)' changed while the remote was not updated."
         }
         $evidence = "push failed and remote was not updated; $stateEvidence"
@@ -1410,7 +1412,7 @@ function Assert-ExactRepositoryState {
       throw "Final repository $property '$($Final.$property)' does not equal initial HEAD '$($Initial.Head)'."
     }
   }
-  if ([string]$Final.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
+  if ($Final.OriginHead -and [string]$Final.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
     throw "Final repository OriginHead '$($Final.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and initial HEAD '$($Initial.Head)'."
   }
   foreach ($property in @('FetchUrl', 'PushUrl')) {

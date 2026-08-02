@@ -1083,6 +1083,19 @@ Test-Case 'post-push verification accepts stale origin tracking when remote HEAD
   Assert-ExactRepositoryState -Initial $initial -Final $after
 }
 
+Test-Case 'verified remote permits an unavailable local origin tracking ref' {
+  $initial = New-TestRepositoryContext 'local-ahead'
+  $before = New-TestRepositoryState $initial
+  $before.OriginHead = ''
+  $before.RemoteHead = $initial.RemoteHead
+  Assert-PrePushRepositoryState -Initial $initial -State $before
+  $after = New-TestRepositoryState $initial
+  $after.OriginHead = ''
+  $after.RemoteHead = $initial.Head
+  Assert-PrePushRepositoryState -Initial $initial -State $after -AfterPush
+  Assert-ExactRepositoryState -Initial $initial -Final $after
+}
+
 Test-Case 'every pre-push repository race stops before git push' {
   Assert-True ([bool](Get-Command Invoke-ExactHeadPush -ErrorAction SilentlyContinue)) `
     'Invoke-ExactHeadPush is undefined'
