@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v10.98
-  Last updated: 2026-07-30
+  Version: v10.99
+  Last updated: 2026-08-02
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-02 v10.99：檔案置入提示僅在真正拖入檔案時顯示，避免背景平移或節點拖曳被誤判為置入新檔案；新增檔案／非檔案拖曳防回歸自檢。
   - 2026-07-30 v10.98：部署前明確診斷本機 origin/master 追蹤 ref 與已驗證遠端 SHA 的差異；補齊水平線與靜態 HTML 匯出 2px／無拖曳符號防回歸自檢。
   - 2026-07-29 v10.97：統一所有心智圖節點外框、分支線、水平分隔線與表格格線粗細，避免不同層級視覺不一致。
   - 2026-07-29 v10.96：移除水平分隔線的圓圈拖曳符號，保留靠近時的淺藍提示底色與整條線拖曳功能。
@@ -736,9 +737,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '10.98';
+const APP_VERSION = '10.99';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-07-30';
+const APP_DATE = '2026-08-02';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -4776,11 +4777,24 @@ function zoomCenter(f){ const vw=viewport.clientWidth/2, vh=viewport.clientHeigh
 
 //===================== 拖放檔案 =====================
 const dropEl=document.getElementById('drop');
-['dragenter','dragover'].forEach(ev=>viewport.addEventListener(ev,e=>{e.preventDefault(); dropEl.classList.add('show');}));
-['dragleave','drop'].forEach(ev=>viewport.addEventListener(ev,e=>{e.preventDefault();
-  if(ev==='drop'||e.target===viewport) dropEl.classList.remove('show');}));
-viewport.addEventListener('drop',e=>{ e.preventDefault(); dropEl.classList.remove('show');
-  const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
+function hasDraggedFiles(dataTransfer){
+  return !!(dataTransfer && ((dataTransfer.files&&dataTransfer.files.length) || Array.from(dataTransfer.types||[]).includes('Files')));
+}
+['dragenter','dragover'].forEach(ev=>viewport.addEventListener(ev,e=>{
+  if(!hasDraggedFiles(e.dataTransfer)) return;
+  e.preventDefault(); dropEl.classList.add('show');
+}));
+viewport.addEventListener('dragleave',e=>{
+  if(!dropEl.classList.contains('show')) return;
+  e.preventDefault();
+  if(e.target===viewport) dropEl.classList.remove('show');
+});
+viewport.addEventListener('drop',e=>{
+  const hasFiles=hasDraggedFiles(e.dataTransfer);
+  e.preventDefault(); dropEl.classList.remove('show');
+  if(!hasFiles) return;
+  const f=e.dataTransfer.files[0]; if(f) loadFile(f);
+});
 window.addEventListener('beforeunload', e=>{
   flushPendingMdText();
   if(hasUnsavedChanges()){ e.preventDefault(); e.returnValue=''; }
@@ -5251,6 +5265,17 @@ function runInteractionSelfTest(options={}){
     const hitDom=hrRect&&findHrHitNodeDom(hrRect.left+12, hrRect.top+hrRect.height+10);
     add('低縮放分隔線有螢幕像素拖曳熱區', !!(hitDom && hitDom===hrDom), hitDom&&hitDom.dataset.id);
     add('水平分隔線不顯示額外拖曳符號', !!(hrDom && !hrDom.querySelector('.hrhandle') && /直接拖曳水平線/.test(hrDom.title||'')), hrDom&&hrDom.title);
+    const savedDropClass=dropEl.className;
+    const nonFileTransfer=new DataTransfer();
+    dropEl.classList.remove('show');
+    viewport.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:nonFileTransfer}));
+    add('非檔案拖曳不顯示檔案置入提示', !dropEl.classList.contains('show'), Array.from(nonFileTransfer.types).join(',')||'no types');
+    const fileTransfer=new DataTransfer();
+    fileTransfer.items.add(new File(['# MK2MD drag test'],'drag-test.md',{type:'text/markdown'}));
+    dropEl.classList.remove('show');
+    viewport.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:fileTransfer}));
+    add('拖入檔案會顯示檔案置入提示', dropEl.classList.contains('show'), Array.from(fileTransfer.types).join(','));
+    dropEl.className=savedDropClass;
     const failed=checks.filter(c=>!c.ok);
     const result={ok:failed.length===0, passed:checks.length-failed.length, failed:failed.length, checks};
     if(options.log) console.table(checks);
@@ -5413,9 +5438,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '10.98'
-      && APP_DATE === '2026-07-30'
-      && APP_TITLE === 'MK2MD v10.98'
+      && APP_VERSION === '10.99'
+      && APP_DATE === '2026-08-02'
+      && APP_TITLE === 'MK2MD v10.99'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
