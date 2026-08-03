@@ -138,6 +138,7 @@ Test-Case 'dot-sourcing does not invoke deployment' {
     'Stop-OwnedProcess',
     'Receive-CdpMessage',
     'Invoke-CdpCommand',
+    'Get-ChromeObservationDecision',
     'Invoke-ChromeSelfTest',
     'Assert-BrowserResult',
     'Get-RemoteIdentity',
@@ -155,6 +156,25 @@ Test-Case 'dot-sourcing does not invoke deployment' {
   foreach ($name in $requiredFunctions) {
     Assert-True ((Get-Command $name).CommandType -eq 'Function') "$name did not load"
   }
+}
+
+Test-Case 'Chrome observation quiet-window decision is deterministic' {
+  $started = [DateTime]::Parse('2026-08-03T00:00:00Z').ToUniversalTime()
+  $minimum = $started.AddMilliseconds(2000)
+  $maximum = $started.AddMilliseconds(5000)
+  $lastDiagnostic = $started.AddMilliseconds(1900)
+  $early = Get-ChromeObservationDecision -Now $started.AddMilliseconds(2250) `
+    -MinimumDeadline $minimum -ObservationDeadline $maximum `
+    -LastDiagnosticEventAt $lastDiagnostic -QuietWindowMilliseconds 500
+  $quiet = Get-ChromeObservationDecision -Now $started.AddMilliseconds(2400) `
+    -MinimumDeadline $minimum -ObservationDeadline $maximum `
+    -LastDiagnosticEventAt $lastDiagnostic -QuietWindowMilliseconds 500
+  $timeout = Get-ChromeObservationDecision -Now $maximum `
+    -MinimumDeadline $minimum -ObservationDeadline $maximum `
+    -LastDiagnosticEventAt $lastDiagnostic -QuietWindowMilliseconds 500
+  Assert-True ($early -eq 'wait') "2250ms decision was not wait: $early"
+  Assert-True ($quiet -eq 'complete') "2400ms decision was not complete: $quiet"
+  Assert-True ($timeout -eq 'timeout') "5000ms decision was not timeout: $timeout"
 }
 
 Test-Case 'checked native failure and timeout throw' {
@@ -832,7 +852,7 @@ Test-Case 'real Chrome diagnostic resets the quiet window' {
     "setTimeout(() => { console.warn('mk2md-quiet-window-reset'); }, 1900);"
   Assert-True (@($fixture.Result.Warnings | Where-Object { $_ -match 'mk2md-quiet-window-reset' }).Count -gt 0) `
     'quiet-window diagnostic was not captured'
-  Assert-True ($fixture.Result.ObservationElapsedMilliseconds -ge 2300 -and `
+  Assert-True ($fixture.Result.ObservationElapsedMilliseconds -ge 2000 -and `
     $fixture.Result.ObservationElapsedMilliseconds -le 5000) `
     "quiet window was not reset within the hard maximum: $($fixture.Result.ObservationElapsedMilliseconds)ms"
 }

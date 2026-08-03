@@ -707,6 +707,21 @@ function Invoke-CdpCommand {
     -EventSink $EventSink -ReceiveMessage $receiveMessage
 }
 
+function Get-ChromeObservationDecision {
+  param(
+    [Parameter(Mandatory)][DateTime]$Now,
+    [Parameter(Mandatory)][DateTime]$MinimumDeadline,
+    [Parameter(Mandatory)][DateTime]$ObservationDeadline,
+    [Parameter(Mandatory)][DateTime]$LastDiagnosticEventAt,
+    [Parameter(Mandatory)][int]$QuietWindowMilliseconds
+  )
+
+  if ($Now -ge $ObservationDeadline) { return 'timeout' }
+  if ($Now -lt $MinimumDeadline) { return 'wait' }
+  if (($Now - $LastDiagnosticEventAt).TotalMilliseconds -lt $QuietWindowMilliseconds) { return 'wait' }
+  return 'complete'
+}
+
 function Invoke-ChromeSelfTest {
   param(
     [Parameter(Mandatory)][uri]$Url,
@@ -920,10 +935,12 @@ JSON.stringify({
       }
 
       $now = [DateTime]::UtcNow
-      $minimumObserved = $now -ge $minimumObservationDeadline
-      $quietObserved = ($now - $lastDiagnosticEventAt).TotalMilliseconds -ge `
-        $script:CdpQuietWindowMilliseconds
-      if ($minimumObserved -and $quietObserved) {
+      $decision = Get-ChromeObservationDecision -Now $now `
+        -MinimumDeadline $minimumObservationDeadline `
+        -ObservationDeadline $observationDeadline `
+        -LastDiagnosticEventAt $lastDiagnosticEventAt `
+        -QuietWindowMilliseconds $script:CdpQuietWindowMilliseconds
+      if ($decision -eq 'complete') {
         $observationStopwatch.Stop()
         break
       }
