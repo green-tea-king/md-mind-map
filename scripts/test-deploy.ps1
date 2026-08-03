@@ -201,8 +201,12 @@ function Wait-ForRealChromeCleanup {
     if ($newChrome.Count -eq 0 -and $missingPreexistingChrome.Count -eq 0 -and $newProfiles.Count -eq 0) {
       return [pscustomobject]@{
         TimedOut = $false
+        ElapsedMilliseconds = [int64]$stopwatch.ElapsedMilliseconds
         ChromeIds = @($chromeAfter)
         Profiles = @($profilesAfter)
+        NewChrome = @($newChrome)
+        MissingPreexistingChrome = @($missingPreexistingChrome)
+        NewProfiles = @($newProfiles)
       }
     }
 
@@ -210,12 +214,34 @@ function Wait-ForRealChromeCleanup {
     if ($remainingMilliseconds -le 0) {
       return [pscustomobject]@{
         TimedOut = $true
+        ElapsedMilliseconds = [int64]$stopwatch.ElapsedMilliseconds
         ChromeIds = @($chromeAfter)
         Profiles = @($profilesAfter)
+        NewChrome = @($newChrome)
+        MissingPreexistingChrome = @($missingPreexistingChrome)
+        NewProfiles = @($newProfiles)
       }
     }
     & $SleepProvider ([Math]::Min(100, $remainingMilliseconds))
   }
+}
+
+function Get-ChromeCleanupTimeoutMessage {
+  param(
+    [Parameter(Mandatory)][string]$Label,
+    [Parameter(Mandatory)][pscustomobject]$Cleanup,
+    [Parameter(Mandatory)][int]$TimeoutMilliseconds
+  )
+
+  $template = '{0} cleanup did not settle within {1}ms (elapsed {2}ms; new Chrome IDs: {3}; ' +
+    'missing pre-existing Chrome IDs: {4}; new profile paths: {5})'
+  return ($template -f
+    $Label,
+    $TimeoutMilliseconds,
+    $Cleanup.ElapsedMilliseconds,
+    (@($Cleanup.NewChrome) -join ', '),
+    (@($Cleanup.MissingPreexistingChrome) -join ', '),
+    (@($Cleanup.NewProfiles) -join ', '))
 }
 
 Test-Case 'Chrome cleanup waits for transient process and profile release' {
@@ -235,6 +261,23 @@ Test-Case 'Chrome cleanup waits for transient process and profile release' {
   Assert-True (-not $cleanup.TimedOut) 'cleanup wait timed out while transient resources released'
   Assert-True (@($cleanup.ChromeIds) -join ',' -eq '101') "cleanup returned wrong Chrome IDs: $($cleanup.ChromeIds -join ',')"
   Assert-True (@($cleanup.Profiles) -join ',' -eq 'base-profile') "cleanup returned wrong profiles: $($cleanup.Profiles -join ',')"
+}
+
+Test-Case 'Chrome cleanup timeout preserves actionable diagnostics' {
+  $cleanup = Wait-ForRealChromeCleanup `
+    -BeforeChromeIds @(101) `
+    -BeforeProfiles @('base-profile') `
+    -ChromeProvider { @(101, 202) }.GetNewClosure() `
+    -ProfileProvider { @('base-profile', 'new-profile') }.GetNewClosure() `
+    -SleepProvider { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }.GetNewClosure() `
+    -TimeoutMilliseconds 30
+  Assert-True $cleanup.TimedOut 'cleanup diagnostic fixture did not time out'
+  Assert-True (@($cleanup.NewChrome) -join ',' -eq '202') "cleanup lost new Chrome diagnostics: $($cleanup.NewChrome -join ',')"
+  Assert-True (@($cleanup.NewProfiles) -join ',' -eq 'new-profile') "cleanup lost profile diagnostics: $($cleanup.NewProfiles -join ',')"
+  Assert-True ([int64]$cleanup.ElapsedMilliseconds -ge 30) "cleanup elapsed time was not preserved: $($cleanup.ElapsedMilliseconds)ms"
+  $message = Get-ChromeCleanupTimeoutMessage -Label 'diagnostic fixture' -Cleanup $cleanup -TimeoutMilliseconds 30
+  Assert-True ($message -match '202' -and $message -match 'new-profile' -and $message -match 'elapsed [0-9]+ms') `
+    "cleanup timeout message omitted diagnostics: $message"
 }
 
 Test-Case 'checked native failure and timeout throw' {
@@ -877,7 +920,9 @@ function Invoke-RealChromeFixture([string]$BodyScript) {
     -SleepProvider { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }.GetNewClosure()
   $chromeAfter = @($cleanup.ChromeIds)
   $profilesAfter = @($cleanup.Profiles)
-  Assert-True (-not $cleanup.TimedOut) 'real Chrome cleanup did not settle within 5000ms'
+  if ($cleanup.TimedOut) {
+    throw (Get-ChromeCleanupTimeoutMessage -Label 'real Chrome' -Cleanup $cleanup -TimeoutMilliseconds 5000)
+  }
   $newChrome = @($chromeAfter | Where-Object { $_ -notin $chromeBefore })
   $missingPreexistingChrome = @($chromeBefore | Where-Object { $_ -notin $chromeAfter })
   $newProfiles = @($profilesAfter | Where-Object { $_ -notin $profilesBefore })
@@ -955,7 +1000,9 @@ Test-Case 'continuous real Chrome diagnostics stop at the hard maximum and clean
     -SleepProvider { param($milliseconds) Start-Sleep -Milliseconds $milliseconds }.GetNewClosure()
   $chromeAfter = @($cleanup.ChromeIds)
   $profilesAfter = @($cleanup.Profiles)
-  Assert-True (-not $cleanup.TimedOut) 'continuous-diagnostic Chrome cleanup did not settle within 5000ms'
+  if ($cleanup.TimedOut) {
+    throw (Get-ChromeCleanupTimeoutMessage -Label 'continuous-diagnostic Chrome' -Cleanup $cleanup -TimeoutMilliseconds 5000)
+  }
   Assert-True $threw 'continuous diagnostics did not fail at the observation hard maximum'
   Assert-True ($null -ne $failureObservationMilliseconds -and `
     [int64]$failureObservationMilliseconds -ge 5000 -and `
