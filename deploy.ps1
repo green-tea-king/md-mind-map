@@ -1330,17 +1330,11 @@ function Assert-PrePushRepositoryState {
     if ([string]$State.RemoteHead -ne [string]$Initial.Head) {
       throw "Pre-push repository RemoteHead '$($State.RemoteHead)' does not equal expected remote HEAD '$($Initial.Head)'."
     }
-    if ($State.OriginHead -and [string]$State.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
-      throw "Pre-push repository OriginHead '$($State.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and expected HEAD '$($Initial.Head)'."
-    }
     return
   }
 
   if ([string]$State.RemoteHead -ne [string]$Initial.RemoteHead) {
     throw "Pre-push repository RemoteHead '$($State.RemoteHead)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
-  }
-  if ($State.OriginHead -and [string]$State.OriginHead -ne [string]$Initial.RemoteHead) {
-    throw "Pre-push repository OriginHead '$($State.OriginHead)' does not equal expected remote HEAD '$($Initial.RemoteHead)'."
   }
 }
 
@@ -1369,14 +1363,8 @@ function Invoke-ExactHeadPush {
         "remote=$($uncertainState.RemoteHead); fetchUrl=$($uncertainState.FetchUrl); " +
         "pushUrl=$($uncertainState.PushUrl); protectedHashes=$($uncertainState.ProtectedHashes.Count)"
       if ([string]$uncertainState.RemoteHead -eq [string]$Initial.Head) {
-        if ($uncertainState.OriginHead -and [string]$uncertainState.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
-          throw "origin/master '$($uncertainState.OriginHead)' is inconsistent with the verified remote HEAD."
-        }
         $evidence = "push outcome uncertain but remote verified; $stateEvidence"
       } elseif ([string]$uncertainState.RemoteHead -eq [string]$Initial.RemoteHead) {
-        if ($uncertainState.OriginHead -and [string]$uncertainState.OriginHead -ne [string]$Initial.RemoteHead) {
-          throw "origin/master '$($uncertainState.OriginHead)' changed while the remote was not updated."
-        }
         $evidence = "push failed and remote was not updated; $stateEvidence"
       } else {
         throw "Remote HEAD '$($uncertainState.RemoteHead)' is neither the original remote nor the expected HEAD."
@@ -1404,9 +1392,6 @@ function Assert-ExactRepositoryState {
     if ([string]$Final.$property -ne [string]$Initial.Head) {
       throw "Final repository $property '$($Final.$property)' does not equal initial HEAD '$($Initial.Head)'."
     }
-  }
-  if ($Final.OriginHead -and [string]$Final.OriginHead -notin @([string]$Initial.RemoteHead, [string]$Initial.Head)) {
-    throw "Final repository OriginHead '$($Final.OriginHead)' is inconsistent with original remote '$($Initial.RemoteHead)' and initial HEAD '$($Initial.Head)'."
   }
   foreach ($property in @('FetchUrl', 'PushUrl')) {
     if ([string]$Final.$property -ne [string]$Initial.$property) {

@@ -1096,6 +1096,19 @@ Test-Case 'verified remote permits an unavailable local origin tracking ref' {
   Assert-ExactRepositoryState -Initial $initial -Final $after
 }
 
+Test-Case 'verified remote permits a stale local origin tracking ref' {
+  $initial = New-TestRepositoryContext 'local-ahead'
+  $before = New-TestRepositoryState $initial
+  $before.OriginHead = 'd' * 40
+  $before.RemoteHead = $initial.RemoteHead
+  Assert-PrePushRepositoryState -Initial $initial -State $before
+  $after = New-TestRepositoryState $initial
+  $after.OriginHead = 'd' * 40
+  $after.RemoteHead = $initial.Head
+  Assert-PrePushRepositoryState -Initial $initial -State $after -AfterPush
+  Assert-ExactRepositoryState -Initial $initial -Final $after
+}
+
 Test-Case 'every pre-push repository race stops before git push' {
   Assert-True ([bool](Get-Command Invoke-ExactHeadPush -ErrorAction SilentlyContinue)) `
     'Invoke-ExactHeadPush is undefined'
@@ -1109,8 +1122,7 @@ Test-Case 'every pre-push repository race stops before git push' {
     @{ Name = 'staged index'; Value = @{ StagedDiffExit = 1 } },
     @{ Name = 'untracked set'; Value = @{ Untracked = @($script:ProtectedUntracked + 'unexpected.txt') } },
     @{ Name = 'protected hash'; Value = @{ ProtectedHash = 'changed' } },
-    @{ Name = 'remote SHA'; Value = @{ RemoteHead = 'c' * 40 } },
-    @{ Name = 'origin master'; Value = @{ OriginHead = 'c' * 40 } }
+    @{ Name = 'remote SHA'; Value = @{ RemoteHead = 'c' * 40 } }
   )
   foreach ($mutation in $mutations) {
     $fixture = New-PrePushFixture $mutation.Value
@@ -1507,7 +1519,6 @@ Test-Case 'equal and local-ahead paths reject every final repository state drift
   $mutations = @(
     @{ Name = 'branch'; Apply = { param($state) $state.Branch = 'feature' } },
     @{ Name = 'HEAD'; Apply = { param($state) $state.Head = 'c' * 40 } },
-    @{ Name = 'origin/master'; Apply = { param($state) $state.OriginHead = 'c' * 40 } },
     @{ Name = 'remote HEAD'; Apply = { param($state) $state.RemoteHead = 'b' * 40 } },
     @{ Name = 'fetch URL'; Apply = { param($state) $state.FetchUrl = 'https://github.com/someone/else.git' } },
     @{ Name = 'push URL'; Apply = { param($state) $state.PushUrl = 'https://github.com/someone/else.git' } },
