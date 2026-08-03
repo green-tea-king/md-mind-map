@@ -412,7 +412,7 @@ Test-Case 'production repository preflight executes the exact checked command se
   $expected = @(
     'git:branch', 'git:fetch-url', 'git:push-url', 'git:working-diff', 'git:staged-diff', 'git:status',
     'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'pwsh:contract', 'gh:auth', 'gh:permission',
-    'git:ls-remote', 'git:fetch', 'git:tracking-head', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
+    'git:ls-remote', 'git:tracking-head', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
     'git:log', 'git:changed-paths', 'snapshot:2'
   )
   $actual = @($fixture.Calls | ForEach-Object Key)

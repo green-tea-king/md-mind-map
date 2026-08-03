@@ -1182,13 +1182,6 @@ process.stdout.write(JSON.stringify({version,date}));
     -Arguments @('ls-remote', $remoteIdentity.FetchUrl, "refs/heads/$($script:ExpectedBranch)") -Repo $Repo).StdOut.Trim()
   if (-not $remoteLine) { throw "Remote branch origin/$($script:ExpectedBranch) is not reachable." }
   $remoteHead = ($remoteLine -split '\s+')[0].ToLowerInvariant()
-  [void](Invoke-RepositoryNative -Native $Native -FilePath 'git' `
-    -Arguments @(
-      'fetch',
-      '--no-tags',
-      $remoteIdentity.FetchUrl,
-      "$($script:ExpectedBranch):refs/remotes/origin/$($script:ExpectedBranch)"
-    ) -Repo $Repo)
   $trackingProbe = Invoke-RepositoryNative -Native $Native -FilePath 'git' `
     -Arguments @('rev-parse', '--verify', "refs/remotes/origin/$($script:ExpectedBranch)") `
     -Repo $Repo -AllowedExitCodes @(0, 128)
