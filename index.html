@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.03
+  Version: v11.04
   Last updated: 2026-08-03
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-03 v11.04：Chrome real-browser 測試新增有界清理等待，確認子程序與 owned profile 釋放後再驗收，避免短暫退出延遲造成誤判。
   - 2026-08-03 v11.03：Chrome quiet-window 測試改用可重現的時間決策 helper，真實瀏覽器只驗證 2～5 秒有界觀察，避免 CI 排程抖動造成誤判。
   - 2026-08-03 v11.02：本機 origin/master tracking ref 改為僅供診斷，不因 stale 或暫時不可讀阻擋已驗證的遠端 SHA；新增 stale ref 合約測試。
   - 2026-08-03 v11.01：部署前改以遠端 ls-remote SHA 作為唯一遠端證據，不再 fetch 寫入 WebDAV 的本機 origin/master 追蹤 ref，避免 lock 造成部署中止。
@@ -741,7 +742,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.03';
+const APP_VERSION = '11.04';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-08-03';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5442,9 +5443,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.03'
+      && APP_VERSION === '11.04'
       && APP_DATE === '2026-08-03'
-      && APP_TITLE === 'MK2MD v11.03'
+      && APP_TITLE === 'MK2MD v11.04'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
