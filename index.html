@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.08
+  Version: v11.09
   Last updated: 2026-08-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-08 v11.09：收合加減符號改用 Flex 置中，避免不同字型或縮放下在圓形按鈕內出現視覺偏移；新增互動自檢驗證按鈕尺寸與置中樣式。
   - 2026-08-08 v11.08：部署前 Chrome 閘門新增節點實際拖曳排序回歸，驗證同層前方、後方與移入子節點後的順序及檔案置入提示狀態。
   - 2026-08-08 v11.07：部署前 Chrome 閘門新增實際滑鼠背景拖曳回歸測試，確認平移不會誤觸發檔案置入提示或改寫 Markdown。
   - 2026-08-08 v11.06：修正畫面平移或拖曳後看見內嵌圖片參考定義時，畫布改顯示簡短摘要，Markdown 面板與匯出仍保留原始 Data URL。
@@ -453,7 +454,7 @@
   .node.lv6{font-size:12px;border-width:var(--unit-line-width);}
   /* collapse toggle */
   .toggle{position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;border:var(--unit-line-width) solid var(--accent);
-    color:var(--accent);font-size:12px;line-height:15px;text-align:center;cursor:pointer;right:-9px;top:50%;
+    display:flex;align-items:center;justify-content:center;padding:0;color:var(--accent);font-size:12px;line-height:1;text-align:center;cursor:pointer;right:-9px;top:50%;
     transform:translateY(-50%);z-index:3;font-weight:700;}
   .toggle:hover{filter:brightness(1.08);box-shadow:0 0 0 3px rgba(20,40,80,.12);}
   #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -746,7 +747,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.08';
+const APP_VERSION = '11.09';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-08-08';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5207,6 +5208,10 @@ function runInteractionSelfTest(options={}){
     const first=roots[0].children[0], second=roots[0].children[1];
     const sampleHr=makeHrNode();
     add('測試節點已渲染到畫布', !!canvas.querySelector(`.node[data-id="${first.id}"]`), first.id);
+    const collapseToggle=canvas.querySelector('.toggle');
+    const toggleStyle=collapseToggle&&getComputedStyle(collapseToggle);
+    add('收合加減符號在圓鈕內置中', !!(collapseToggle && toggleStyle && toggleStyle.display==='flex' && toggleStyle.alignItems==='center' && toggleStyle.justifyContent==='center' && collapseToggle.offsetWidth===18 && collapseToggle.offsetHeight===18),
+      collapseToggle ? `${toggleStyle.display}/${toggleStyle.alignItems}/${toggleStyle.justifyContent}/${collapseToggle.offsetWidth}x${collapseToggle.offsetHeight}` : 'missing toggle');
     const firstDom=canvas.querySelector(`.node[data-id="${first.id}"]`), firstEdge=svg.querySelector('path.edge-flow');
     add('心智圖單元線條與框線統一粗細', !!(firstDom && firstEdge && getComputedStyle(firstDom).borderTopWidth==='2px' && firstEdge.getAttribute('stroke-width')==='2'), `${firstDom&&getComputedStyle(firstDom).borderTopWidth}|${firstEdge&&firstEdge.getAttribute('stroke-width')}`);
     add('固定 Markdown 順序版面啟用', orient==='h' && VGAP>=18, `orient=${orient}, vgap=${VGAP}`);
@@ -5468,9 +5473,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.08'
+      && APP_VERSION === '11.09'
       && APP_DATE === '2026-08-08'
-      && APP_TITLE === 'MK2MD v11.08'
+      && APP_TITLE === 'MK2MD v11.09'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
