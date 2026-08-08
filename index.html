@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.05
-  Last updated: 2026-08-03
+  Version: v11.06
+  Last updated: 2026-08-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-08 v11.06：修正畫面平移或拖曳後看見內嵌圖片參考定義時，畫布改顯示簡短摘要，Markdown 面板與匯出仍保留原始 Data URL。
   - 2026-08-03 v11.05：Chrome 清理逾時錯誤補充實際等待時間、殘留子程序 PID 與 profile 路徑，讓 CI 失敗可直接定位清理問題。
   - 2026-08-03 v11.04：Chrome real-browser 測試新增有界清理等待，確認子程序與 owned profile 釋放後再驗收，避免短暫退出延遲造成誤判。
   - 2026-08-03 v11.03：Chrome quiet-window 測試改用可重現的時間決策 helper，真實瀏覽器只驗證 2～5 秒有界觀察，避免 CI 排程抖動造成誤判。
@@ -743,9 +744,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.05';
+const APP_VERSION = '11.06';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-08-03';
+const APP_DATE = '2026-08-08';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -1059,10 +1060,18 @@ function markdownPerformanceLabel(perf){
   const level=perf.heavy ? '大型檔案保護中' : '大型檔案';
   return `${level} · 同步延遲 ${perf.debounceMs||300}ms`;
 }
+function refDefDisplayText(refdef){
+  const raw=String(refdef&&refdef.raw||'');
+  const url=String(refdef&&refdef.url||'').trim();
+  if(!/^data:image\//i.test(url)) return raw;
+  const id=String(refdef&&refdef.id||'').trim() || '圖片';
+  const format=/^data:image\/svg\+xml,/i.test(url) ? 'SVG' : '圖片';
+  return `[${id}]: 內嵌圖片（${format}）`;
+}
 function nodeAriaLabel(n){
   if(!n) return '心智圖節點';
   if(n.kind==='hr') return 'Markdown 水平分隔線';
-  const title=String(n.title||n.refdef&&n.refdef.raw||n.code||'空白節點').replace(/\s+/g,' ').trim().slice(0,90);
+  const title=String(n.title || (n.refdef ? refDefDisplayText(n.refdef) : '') || n.code || '空白節點').replace(/\s+/g,' ').trim().slice(0,90);
   const parts=['心智圖節點', title];
   if(n.depth!=null) parts.push('第 '+(Number(n.depth)+1)+' 層');
   if(n.children&&n.children.length) parts.push(n.collapsed?'已收合':'已展開');
@@ -2170,7 +2179,7 @@ function render(){
     if(n.icon){ const ic=document.createElement('span'); ic.className='nicon'; ic.textContent=n.icon; d.appendChild(ic); }
     // title / 表格
     const tx=document.createElement('span'); tx.className='ntext';
-    if(n.refdef){ tx.textContent = n.refdef.raw || n.title || ''; }
+    if(n.refdef){ tx.textContent = refDefDisplayText(n.refdef); }
     else if(n.alert){
       const TYPE={NOTE:'📘 NOTE',TIP:'💡 TIP',IMPORTANT:'❗ IMPORTANT',WARNING:'⚠️ WARNING',CAUTION:'🛑 CAUTION'};
       d.classList.add('alert', n.alert.toLowerCase());
@@ -4971,6 +4980,19 @@ function runTemplateSelfTest(options={}){
     add('五種警示框皆存在', ['NOTE','TIP','IMPORTANT','WARNING','CAUTION'].every(t=>stats.alerts.has(t)), [...stats.alerts].join(','));
     add('腳註定義存在', stats.fndef>=1, `${stats.fndef} footnote`);
     add('參考式連結/圖片定義存在', stats.refdef>=3, `${stats.refdef} refs`);
+    let embeddedImageRef=null;
+    const findEmbeddedImageRef=n=>{
+      if(embeddedImageRef) return;
+      if(n.refdef && /^data:image\//i.test(String(n.refdef.url||''))) { embeddedImageRef=n; return; }
+      for(const c of n.children||[]) findEmbeddedImageRef(c);
+    };
+    parsed.forEach(findEmbeddedImageRef);
+    add('畫布以摘要顯示內嵌圖片參考定義',
+      !!embeddedImageRef && refDefDisplayText(embeddedImageRef.refdef)==='[sample-image]: 內嵌圖片（SVG）',
+      embeddedImageRef&&embeddedImageRef.refdef&&embeddedImageRef.refdef.raw);
+    add('內嵌圖片參考定義匯出仍保留原始 Data URL',
+      !!embeddedImageRef && exported.includes(embeddedImageRef.refdef.raw),
+      embeddedImageRef&&embeddedImageRef.refdef&&embeddedImageRef.refdef.raw);
     add('引用與標題註解存在', stats.quote>=1 && stats.notes>=1, `${stats.quote} quotes, ${stats.notes} notes`);
     add('待辦與有序清單存在', stats.todo>=2 && stats.ordered>=3, `${stats.todo} todos, ${stats.ordered} ordered`);
     add('圖片與連結示範存在', stats.images>=1 && stats.links>=2, `${stats.images} images, ${stats.links} links`);
@@ -5444,9 +5466,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.05'
-      && APP_DATE === '2026-08-03'
-      && APP_TITLE === 'MK2MD v11.05'
+      && APP_VERSION === '11.06'
+      && APP_DATE === '2026-08-08'
+      && APP_TITLE === 'MK2MD v11.06'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
