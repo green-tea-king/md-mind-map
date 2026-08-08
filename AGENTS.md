@@ -1,6 +1,6 @@
 # MK2MD 專案維護規範
 
-本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v11.07`（`2026-08-08`）。預設使用台灣繁體中文協作。
+本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v11.08`（`2026-08-08`）。預設使用台灣繁體中文協作。
 
 ## 1. 工作範圍與優先順序
 
@@ -86,6 +86,7 @@
 - `git diff --check` 必須無輸出。
 - 以本機 HTTP server 與 installed Chrome 執行 `?ci-selftest=1`；應為 `11/11`、0 failed。
 - Chrome 部署閘門另須以實際 CDP 滑鼠事件做背景拖曳回歸，確認不顯示檔案置入提示、Markdown 不變且平移有生效。
+- Chrome 部署閘門另須驗證節點實際拖曳到同層前方、後方與子節點後的順序及檔案置入提示狀態。
 - 真實瀏覽器確認 `document.title`、`#brandName`、page error 與 console error；error 必須為 0。
 - 既有 Canvas `willReadFrequently` warning 基準是 6；本次變更不得增加。
 - UI 變更另依 `PROJECT_RULES.md` 驗證右鍵選單與工具列歸屬。

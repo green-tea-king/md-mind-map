@@ -48,6 +48,11 @@ Test-Case 'browser gate executes real pointer drag regression' {
   Assert-True ($source.Contains('mk2md-drag-regression')) 'real pointer drag regression marker is missing'
   Assert-True ($source.Contains("classList.contains('show')")) 'real pointer drag regression does not inspect file drop overlay'
 }
+Test-Case 'browser gate executes node reorder drag regression' {
+  Assert-True ($source.Contains('mk2md-node-drag-regression')) 'node reorder drag regression marker is missing'
+  Assert-True ($source.Contains('before-order')) 'node reorder regression does not verify before ordering'
+  Assert-True ($source.Contains('into-order')) 'node reorder regression does not verify child ordering'
+}
 Test-Case 'browser gate child processes do not use repository paths as working directories' {
   Assert-True ($source.Contains('function Get-StableProcessWorkingDirectory')) `
     'stable child-process working directory helper is missing'

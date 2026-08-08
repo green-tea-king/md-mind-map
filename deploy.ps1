@@ -978,6 +978,192 @@ JSON.stringify({
     }
     }
 
+    # 真實節點拖曳回歸：驗證同層前方、後方與移入子節點三種排序。
+    $nodeDragSetupEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+      expression = @'
+(() => {
+  if (!document.querySelector('#viewport') || !document.querySelector('#drop')) {
+    return JSON.stringify({ marker: 'mk2md-node-drag-regression', ready: false, skipped: true });
+  }
+  window.__mk2mdNodeDragRestore = {
+    roots: roots.map(cloneTree),
+    selectedId: selected && selected.id,
+    selectionIds: [...selection].map(n => n.id),
+    scale, panX, panY, orient
+  };
+  roots = parseMarkdown('# Drag Regression\n- A\n- B\n- C\n');
+  roots.forEach(r => setParents(r, null));
+  selected = null;
+  selection = new Set();
+  scale = 1;
+  panX = 80;
+  panY = 60;
+  orient = 'h';
+  render();
+  applyTransform();
+  return JSON.stringify({ marker: 'mk2md-node-drag-regression', ready: !!(roots[0] && roots[0].children.length === 3) });
+})()
+'@
+      returnByValue = $true
+    } -EventSink $events
+    $nodeDragSetupValue = $null
+    $nodeDragSetupOuter = $nodeDragSetupEvaluation.PSObject.Properties['result']
+    if ($null -ne $nodeDragSetupOuter) {
+      $nodeDragSetupInner = $nodeDragSetupOuter.Value.PSObject.Properties['result']
+      if ($null -ne $nodeDragSetupInner) {
+        $nodeDragSetupValueProperty = $nodeDragSetupInner.Value.PSObject.Properties['value']
+        if ($null -ne $nodeDragSetupValueProperty) { $nodeDragSetupValue = $nodeDragSetupValueProperty.Value }
+      }
+    }
+    if (-not $nodeDragSetupValue) { throw 'Chrome node drag regression setup returned no data.' }
+    $nodeDragSetup = $nodeDragSetupValue | ConvertFrom-Json
+    $nodeDragSkipped = $false
+    $nodeDragSkippedProperty = $nodeDragSetup.PSObject.Properties['skipped']
+    if ($null -ne $nodeDragSkippedProperty) { $nodeDragSkipped = [bool]$nodeDragSkippedProperty.Value }
+    if (-not $nodeDragSkipped -and ($nodeDragSetup.marker -ne 'mk2md-node-drag-regression' -or -not $nodeDragSetup.ready)) {
+      throw 'Chrome node drag regression setup did not create the expected fixture.'
+    }
+    if (-not $nodeDragSkipped) {
+    $nodeDragStateExpression = @'
+(() => {
+  const root = roots[0];
+  const find = title => [...document.querySelectorAll('.node')].find(d => {
+    const n = findByIdAll(d.dataset.id);
+    return n && n.title === title;
+  });
+  const rect = title => {
+    const d = find(title);
+    if (!d) return null;
+    const r = d.getBoundingClientRect();
+    return { left:r.left, top:r.top, right:r.right, bottom:r.bottom, cx:(r.left+r.right)/2, cy:(r.top+r.bottom)/2 };
+  };
+  return JSON.stringify({
+    marker: 'mk2md-node-drag-regression',
+    order: root.children.map(n => n.title),
+    bChildren: (root.children.find(n => n.title === 'B')?.children || []).map(n => n.title),
+    sourceA: rect('A'),
+    sourceC: rect('C'),
+    targetB: rect('B'),
+    targetC: rect('C'),
+    dropVisible: !!(dropEl && dropEl.classList.contains('show')),
+    dragState: drag ? { moved: !!drag.moved, target: drag.target && drag.target.title, mode: drag.dropMode || null } : null,
+    markdown: toMarkdown(roots)
+  });
+})()
+'@
+    $nodeDragStages = @(
+      [pscustomobject]@{ Name = 'before-order'; Source = 'C'; Target = 'B'; Mode = 'before'; Expected = @('A','C','B'); ExpectedChildren = $null },
+      [pscustomobject]@{ Name = 'after-order'; Source = 'A'; Target = 'B'; Mode = 'after'; Expected = @('C','B','A'); ExpectedChildren = $null },
+      [pscustomobject]@{ Name = 'into-order'; Source = 'A'; Target = 'B'; Mode = 'into'; Expected = @('C','B'); ExpectedChildren = @('A') }
+    )
+    $nodeDragFailure = $null
+    try {
+      foreach ($stage in $nodeDragStages) {
+        $stateEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+          expression = $nodeDragStateExpression
+          returnByValue = $true
+        } -EventSink $events
+        $stateValue = $null
+        $stateOuter = $stateEvaluation.PSObject.Properties['result']
+        if ($null -ne $stateOuter) {
+          $stateInner = $stateOuter.Value.PSObject.Properties['result']
+          if ($null -ne $stateInner) {
+            $stateValueProperty = $stateInner.Value.PSObject.Properties['value']
+            if ($null -ne $stateValueProperty) { $stateValue = $stateValueProperty.Value }
+          }
+        }
+        if (-not $stateValue) { throw "Chrome node drag $($stage.Name) state returned no data." }
+        $state = $stateValue | ConvertFrom-Json
+        $sourceRect = if ($stage.Source -eq 'C') { $state.sourceC } else { $state.sourceA }
+        $targetRect = if ($stage.Target -eq 'B') { $state.targetB } else { $state.targetC }
+        if ($null -eq $sourceRect -or $null -eq $targetRect) { throw "Chrome node drag $($stage.Name) could not locate source or target." }
+        $targetY = if ($stage.Mode -eq 'before') { [double]$targetRect.top + 2 } elseif ($stage.Mode -eq 'after') { [double]$targetRect.bottom - 2 } else { [double]$targetRect.cy }
+        foreach ($mouseEvent in @(
+          @{ type = 'mousePressed'; button = 'left'; clickCount = 1; x = [double]$sourceRect.cx; y = [double]$sourceRect.cy },
+          @{ type = 'mouseMoved'; button = 'none'; clickCount = 1; x = [double]$sourceRect.cx + 20; y = [double]$sourceRect.cy + 20 },
+          @{ type = 'mouseMoved'; button = 'none'; clickCount = 1; x = [double]$targetRect.cx; y = $targetY },
+          @{ type = 'mouseMoved'; button = 'none'; clickCount = 1; x = [double]$targetRect.cx; y = $targetY },
+          @{ type = 'mouseMoved'; button = 'none'; clickCount = 1; x = [double]$targetRect.cx; y = $targetY }
+        )) {
+          [void](Invoke-CdpCommand -WebSocket $socket -Method 'Input.dispatchMouseEvent' -Params $mouseEvent -EventSink $events)
+          Start-Sleep -Milliseconds 25
+        }
+        $preReleaseEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+          expression = $nodeDragStateExpression
+          returnByValue = $true
+        } -EventSink $events
+        $preReleaseValue = $null
+        $preReleaseOuter = $preReleaseEvaluation.PSObject.Properties['result']
+        if ($null -ne $preReleaseOuter) {
+          $preReleaseInner = $preReleaseOuter.Value.PSObject.Properties['result']
+          if ($null -ne $preReleaseInner) {
+            $preReleaseValueProperty = $preReleaseInner.Value.PSObject.Properties['value']
+            if ($null -ne $preReleaseValueProperty) { $preReleaseValue = $preReleaseValueProperty.Value }
+          }
+        }
+        if (-not $preReleaseValue) { throw "Chrome node drag $($stage.Name) pre-release state returned no data." }
+        $preRelease = $preReleaseValue | ConvertFrom-Json
+        if ($null -eq $preRelease.dragState -or $preRelease.dragState.target -ne $stage.Target) {
+          throw "Chrome node drag $($stage.Name) did not reach target before release: $($preRelease | ConvertTo-Json -Compress)"
+        }
+        [void](Invoke-CdpCommand -WebSocket $socket -Method 'Input.dispatchMouseEvent' -Params @{
+          type = 'mouseReleased'; button = 'left'; clickCount = 1; x = [double]$targetRect.cx; y = $targetY
+        } -EventSink $events)
+        Start-Sleep -Milliseconds 50
+        $afterEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+          expression = $nodeDragStateExpression
+          returnByValue = $true
+        } -EventSink $events
+        $afterValue = $null
+        $afterOuter = $afterEvaluation.PSObject.Properties['result']
+        if ($null -ne $afterOuter) {
+          $afterInner = $afterOuter.Value.PSObject.Properties['result']
+          if ($null -ne $afterInner) {
+            $afterValueProperty = $afterInner.Value.PSObject.Properties['value']
+            if ($null -ne $afterValueProperty) { $afterValue = $afterValueProperty.Value }
+          }
+        }
+        if (-not $afterValue) { throw "Chrome node drag $($stage.Name) result returned no data." }
+        $after = $afterValue | ConvertFrom-Json
+        $actualOrder = @($after.order | ForEach-Object { [string]$_ })
+        $expectedOrder = @($stage.Expected | ForEach-Object { [string]$_ })
+        $orderOk = ($actualOrder -join '|') -eq ($expectedOrder -join '|')
+        $childrenOk = $true
+        if ($stage.ExpectedChildren) {
+          $actualChildren = @($after.bChildren | ForEach-Object { [string]$_ })
+          $expectedChildren = @($stage.ExpectedChildren | ForEach-Object { [string]$_ })
+          $childrenOk = ($actualChildren -join '|') -eq ($expectedChildren -join '|')
+        }
+        if (-not $orderOk -or -not $childrenOk -or $after.dropVisible) {
+          throw "Chrome node drag $($stage.Name) failed: $($after | ConvertTo-Json -Compress)"
+        }
+      }
+    } finally {
+      [void](Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+        expression = @'
+(() => {
+  const saved = window.__mk2mdNodeDragRestore;
+  if (!saved) return true;
+  roots = saved.roots;
+  roots.forEach(r => setParents(r, null));
+  scale = saved.scale;
+  panX = saved.panX;
+  panY = saved.panY;
+  orient = saved.orient;
+  selection = new Set();
+  (saved.selectionIds || []).forEach(id => { const n = findByIdAll(id); if (n) selection.add(n); });
+  selected = saved.selectedId ? findByIdAll(saved.selectedId) : null;
+  render();
+  applyTransform();
+  delete window.__mk2mdNodeDragRestore;
+  return true;
+})()
+'@
+        returnByValue = $true
+      } -EventSink $events)
+    }
+    }
+
     $observationStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $observationStartedAt = [DateTime]::UtcNow
     $minimumObservationDeadline = $observationStartedAt.AddMilliseconds(
