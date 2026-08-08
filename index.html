@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.06
+  Version: v11.07
   Last updated: 2026-08-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-08 v11.07：部署前 Chrome 閘門新增實際滑鼠背景拖曳回歸測試，確認平移不會誤觸發檔案置入提示或改寫 Markdown。
   - 2026-08-08 v11.06：修正畫面平移或拖曳後看見內嵌圖片參考定義時，畫布改顯示簡短摘要，Markdown 面板與匯出仍保留原始 Data URL。
   - 2026-08-03 v11.05：Chrome 清理逾時錯誤補充實際等待時間、殘留子程序 PID 與 profile 路徑，讓 CI 失敗可直接定位清理問題。
   - 2026-08-03 v11.04：Chrome real-browser 測試新增有界清理等待，確認子程序與 owned profile 釋放後再驗收，避免短暫退出延遲造成誤判。
@@ -744,7 +745,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.06';
+const APP_VERSION = '11.07';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-08-08';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5466,9 +5467,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.06'
+      && APP_VERSION === '11.07'
       && APP_DATE === '2026-08-08'
-      && APP_TITLE === 'MK2MD v11.06'
+      && APP_TITLE === 'MK2MD v11.07'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

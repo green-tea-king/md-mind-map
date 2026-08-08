@@ -10,7 +10,7 @@ https://green-tea-king.github.io/md-mind-map/
 
 ## Current Version
 
-- Version: `v11.06`
+- Version: `v11.07`
 - Date: `2026-08-08`
 - Tracked app file: `index.html`
 
@@ -35,13 +35,13 @@ https://green-tea-king.github.io/md-mind-map/
 
 ## Deployment
 
-GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會把維護用的 README、PROJECT_RULES 或備份檔放進網站。發布前會先執行版本一致性檢查，再用無頭 Chrome 執行完整 11 組自檢；任一檢查失敗就停止部署。
+GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會把維護用的 README、PROJECT_RULES 或備份檔放進網站。發布前會先執行版本一致性檢查，再用無頭 Chrome 執行完整 11 組自檢與實際背景拖曳回歸；任一檢查失敗就停止部署。
 
 本機部署工具：
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v11.06
+# Deploy v11.07
 .\scripts\start-deploy.ps1 -ExpectedHead $head
 ```
 

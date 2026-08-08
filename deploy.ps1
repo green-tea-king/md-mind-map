@@ -875,6 +875,109 @@ JSON.stringify({
       throw "Chrome self-test did not finish within 90 seconds for MK2MD v$ExpectedVersion ($ExpectedDate)."
     }
 
+    # 真實滑鼠回歸：背景拖曳／平移不得被檔案置入流程誤判。
+    $dragProbeExpression = @'
+(() => {
+  const viewport = document.querySelector('#viewport');
+  const drop = document.querySelector('#drop');
+  const md = document.querySelector('#mdText');
+  if (!viewport || !drop) return JSON.stringify({ marker: 'mk2md-drag-regression', passed: false, detail: 'missing viewport or drop element' });
+  const r = viewport.getBoundingClientRect();
+  const candidates = [
+    [r.left + 24, r.top + 24],
+    [r.right - 24, r.top + 24],
+    [r.left + 24, r.bottom - 24],
+    [r.right - 24, r.bottom - 24],
+    [r.left + r.width * 0.5, r.top + r.height * 0.5]
+  ];
+  const point = candidates.find(([x, y]) => {
+    const el = document.elementFromPoint(x, y);
+    return el && !el.closest('.node') && !el.closest('#drop') && !el.closest('.floatwin');
+  });
+  if (!point) return JSON.stringify({ marker: 'mk2md-drag-regression', passed: false, detail: 'no blank viewport point' });
+  const [x, y] = point;
+  return JSON.stringify({
+    marker: 'mk2md-drag-regression',
+    passed: true,
+    x, y,
+    beforeDropVisible: drop.classList.contains('show'),
+    beforeMarkdown: md ? md.value : '',
+    beforePanX: typeof panX === 'number' ? panX : null,
+    beforePanY: typeof panY === 'number' ? panY : null
+  });
+})()
+'@
+    $dragProbeEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+      expression = $dragProbeExpression
+      returnByValue = $true
+    } -EventSink $events
+    $dragProbeValue = $null
+    $dragProbeOuter = $dragProbeEvaluation.PSObject.Properties['result']
+    if ($null -ne $dragProbeOuter) {
+      $dragProbeInner = $dragProbeOuter.Value.PSObject.Properties['result']
+      if ($null -ne $dragProbeInner) {
+        $dragProbeValueProperty = $dragProbeInner.Value.PSObject.Properties['value']
+        if ($null -ne $dragProbeValueProperty) { $dragProbeValue = $dragProbeValueProperty.Value }
+      }
+    }
+    if (-not $dragProbeValue) { throw 'Chrome drag regression probe returned no coordinate data.' }
+    $dragProbe = $dragProbeValue | ConvertFrom-Json
+    $dragRegressionSkipped = $false
+    if ($dragProbe.marker -ne 'mk2md-drag-regression' -or -not $dragProbe.passed) {
+      if ($dragProbe.detail -eq 'missing viewport or drop element') {
+        $dragRegressionSkipped = $true
+      } else {
+        throw "Chrome drag regression probe could not prepare a blank viewport point: $($dragProbe.detail)"
+      }
+    }
+    if ($dragRegressionSkipped) { $dragProbe = [pscustomobject]@{ marker = 'mk2md-drag-regression'; passed = $true; skipped = $true } }
+    if (-not $dragRegressionSkipped) {
+    $beforeMarkdownJson = ([string]$dragProbe.beforeMarkdown | ConvertTo-Json -Compress)
+    $dragStateExpression = "window.__mk2mdDragProbeBeforeMarkdown = $beforeMarkdownJson; window.__mk2mdDragProbeBeforePanX = $([double]$dragProbe.beforePanX); window.__mk2mdDragProbeBeforePanY = $([double]$dragProbe.beforePanY); true"
+    [void](Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+      expression = $dragStateExpression
+      returnByValue = $true
+    } -EventSink $events)
+    foreach ($mouseEvent in @(
+      @{ type = 'mousePressed'; button = 'left'; buttons = 1; clickCount = 1; x = [double]$dragProbe.x; y = [double]$dragProbe.y },
+      @{ type = 'mouseMoved'; button = 'none'; buttons = 1; clickCount = 1; x = [double]$dragProbe.x + 80; y = [double]$dragProbe.y + 40 },
+      @{ type = 'mouseReleased'; button = 'left'; buttons = 0; clickCount = 1; x = [double]$dragProbe.x + 80; y = [double]$dragProbe.y + 40 }
+    )) {
+      [void](Invoke-CdpCommand -WebSocket $socket -Method 'Input.dispatchMouseEvent' -Params $mouseEvent -EventSink $events)
+    }
+    $dragResultEvaluation = Invoke-CdpCommand -WebSocket $socket -Method 'Runtime.evaluate' -Params @{
+      expression = @'
+(() => {
+  const drop = document.querySelector('#drop');
+  const md = document.querySelector('#mdText');
+  const beforeMarkdown = window.__mk2mdDragProbeBeforeMarkdown || null;
+  return JSON.stringify({
+    marker: 'mk2md-drag-regression',
+    dropVisible: !!(drop && drop.classList.contains('show')),
+    markdownUnchanged: beforeMarkdown === null || !md || md.value === beforeMarkdown,
+    panChanged: typeof panX === 'number' && typeof panY === 'number' &&
+      (panX !== window.__mk2mdDragProbeBeforePanX || panY !== window.__mk2mdDragProbeBeforePanY)
+  });
+})()
+'@
+      returnByValue = $true
+    } -EventSink $events
+    $dragResultValue = $null
+    $dragResultOuter = $dragResultEvaluation.PSObject.Properties['result']
+    if ($null -ne $dragResultOuter) {
+      $dragResultInner = $dragResultOuter.Value.PSObject.Properties['result']
+      if ($null -ne $dragResultInner) {
+        $dragResultValueProperty = $dragResultInner.Value.PSObject.Properties['value']
+        if ($null -ne $dragResultValueProperty) { $dragResultValue = $dragResultValueProperty.Value }
+      }
+    }
+    if (-not $dragResultValue) { throw 'Chrome drag regression result returned no data.' }
+    $dragResult = $dragResultValue | ConvertFrom-Json
+    if ($dragResult.marker -ne 'mk2md-drag-regression' -or $dragResult.dropVisible -or -not $dragResult.markdownUnchanged -or -not $dragResult.panChanged) {
+      throw "Chrome drag regression failed: $($dragResult | ConvertTo-Json -Compress)"
+    }
+    }
+
     $observationStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $observationStartedAt = [DateTime]::UtcNow
     $minimumObservationDeadline = $observationStartedAt.AddMilliseconds(

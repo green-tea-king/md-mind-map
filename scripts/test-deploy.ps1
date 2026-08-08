@@ -43,6 +43,11 @@ Test-Case 'deployment source exposes dry-run exact-head and bounded CDP contract
   Assert-True ($source.Contains('Invoke-ExactHeadPush -Initial $context')) `
     'production push adapter does not use the exact pre-push barrier'
 }
+Test-Case 'browser gate executes real pointer drag regression' {
+  Assert-True ($source.Contains("Input.dispatchMouseEvent")) 'Chrome browser gate does not dispatch real pointer events'
+  Assert-True ($source.Contains('mk2md-drag-regression')) 'real pointer drag regression marker is missing'
+  Assert-True ($source.Contains("classList.contains('show')")) 'real pointer drag regression does not inspect file drop overlay'
+}
 Test-Case 'browser gate child processes do not use repository paths as working directories' {
   Assert-True ($source.Contains('function Get-StableProcessWorkingDirectory')) `
     'stable child-process working directory helper is missing'
