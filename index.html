@@ -2,7 +2,7 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.10
+  Version: v11.11
   Last updated: 2026-08-08
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-08 v11.11：SVG 收合符號改用填滿圓框內緣的 14px 對稱視窗與固定幾何中心，改善加減線段的光學置中。
   - 2026-08-08 v11.10：收合加減符號改為圓心固定的 SVG 線段，並與單元框線使用相同線寬，避免字型基線造成視覺偏心。
   - 2026-08-08 v11.09：收合加減符號改用 Flex 置中，避免不同字型或縮放下在圓形按鈕內出現視覺偏移；新增互動自檢驗證按鈕尺寸與置中樣式。
   - 2026-08-08 v11.08：部署前 Chrome 閘門新增節點實際拖曳排序回歸，驗證同層前方、後方與移入子節點後的順序及檔案置入提示狀態。
@@ -457,7 +458,7 @@
   .toggle{position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;border:var(--unit-line-width) solid var(--accent);
     display:flex;align-items:center;justify-content:center;padding:0;color:var(--accent);cursor:pointer;right:-9px;top:50%;
     transform:translateY(-50%);z-index:3;font-weight:700;}
-  .toggle svg{display:block;width:12px;height:12px;overflow:visible;pointer-events:none;}
+  .toggle svg{display:block;width:14px;height:14px;overflow:visible;pointer-events:none;shape-rendering:geometricPrecision;}
   .toggle svg line{stroke:currentColor;stroke-width:var(--unit-line-width);stroke-linecap:round;}
   .toggle:hover{filter:brightness(1.08);box-shadow:0 0 0 3px rgba(20,40,80,.12);}
   #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -750,7 +751,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.10';
+const APP_VERSION = '11.11';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-08-08';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -1905,16 +1906,16 @@ function isBranchNode(n){ return !!n && n.kind!=='hr'; }
 function visibleChildren(n){ return n.kind==='hr' ? [] : (n.collapsed ? [] : n.children); }
 function createToggleGlyph(collapsed){
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.setAttribute('viewBox','0 0 12 12');
+  svg.setAttribute('viewBox','0 0 14 14');
   svg.setAttribute('aria-hidden','true');
   const horizontal=document.createElementNS('http://www.w3.org/2000/svg','line');
-  horizontal.setAttribute('x1','2'); horizontal.setAttribute('y1','6');
-  horizontal.setAttribute('x2','10'); horizontal.setAttribute('y2','6');
+  horizontal.setAttribute('x1','3'); horizontal.setAttribute('y1','7');
+  horizontal.setAttribute('x2','11'); horizontal.setAttribute('y2','7');
   svg.appendChild(horizontal);
   if(collapsed){
     const vertical=document.createElementNS('http://www.w3.org/2000/svg','line');
-    vertical.setAttribute('x1','6'); vertical.setAttribute('y1','2');
-    vertical.setAttribute('x2','6'); vertical.setAttribute('y2','10');
+    vertical.setAttribute('x1','7'); vertical.setAttribute('y1','3');
+    vertical.setAttribute('x2','7'); vertical.setAttribute('y2','11');
     svg.appendChild(vertical);
   }
   return svg;
@@ -5234,6 +5235,9 @@ function runInteractionSelfTest(options={}){
     const toggleGlyph=collapseToggle&&collapseToggle.querySelector('svg');
     add('收合加減符號使用等粗 SVG 線段', !!(toggleGlyph && toggleGlyph.querySelectorAll('line').length===1 && getComputedStyle(toggleGlyph.querySelector('line')).strokeWidth==='2px'),
       toggleGlyph ? `${toggleGlyph.querySelectorAll('line').length} line/${getComputedStyle(toggleGlyph.querySelector('line')).strokeWidth}` : 'missing svg');
+    const toggleLine=toggleGlyph&&toggleGlyph.querySelector('line');
+    add('收合符號線段幾何中心固定', !!(toggleGlyph && toggleGlyph.getAttribute('viewBox')==='0 0 14 14' && toggleLine && Number(toggleLine.getAttribute('y1'))===7 && Number(toggleLine.getAttribute('y2'))===7 && Number(toggleLine.getAttribute('x1'))===3 && Number(toggleLine.getAttribute('x2'))===11),
+      toggleLine ? `${toggleGlyph.getAttribute('viewBox')} / ${toggleLine.getAttribute('x1')},${toggleLine.getAttribute('y1')}-${toggleLine.getAttribute('x2')},${toggleLine.getAttribute('y2')}` : 'missing line');
     const firstDom=canvas.querySelector(`.node[data-id="${first.id}"]`), firstEdge=svg.querySelector('path.edge-flow');
     add('心智圖單元線條與框線統一粗細', !!(firstDom && firstEdge && getComputedStyle(firstDom).borderTopWidth==='2px' && firstEdge.getAttribute('stroke-width')==='2'), `${firstDom&&getComputedStyle(firstDom).borderTopWidth}|${firstEdge&&firstEdge.getAttribute('stroke-width')}`);
     add('固定 Markdown 順序版面啟用', orient==='h' && VGAP>=18, `orient=${orient}, vgap=${VGAP}`);
@@ -5495,9 +5499,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.10'
+      && APP_VERSION === '11.11'
       && APP_DATE === '2026-08-08'
-      && APP_TITLE === 'MK2MD v11.10'
+      && APP_TITLE === 'MK2MD v11.11'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
