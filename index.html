@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.11
-  Last updated: 2026-08-08
+  Version: v11.12
+  Last updated: 2026-08-18
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-18 v11.12：修正 JPG/PDF Canvas 匯出漏畫收合按鈕，現在會同步輸出圓框與 SVG 加減符號；新增匯出回歸檢查。
   - 2026-08-08 v11.11：SVG 收合符號改用填滿圓框內緣的 14px 對稱視窗與固定幾何中心，改善加減線段的光學置中。
   - 2026-08-08 v11.10：收合加減符號改為圓心固定的 SVG 線段，並與單元框線使用相同線寬，避免字型基線造成視覺偏心。
   - 2026-08-08 v11.09：收合加減符號改用 Flex 置中，避免不同字型或縮放下在圓形按鈕內出現視覺偏移；新增互動自檢驗證按鈕尺寸與置中樣式。
@@ -751,9 +752,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.11';
+const APP_VERSION = '11.12';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-08-08';
+const APP_DATE = '2026-08-18';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -3077,7 +3078,28 @@ function renderMapToCanvas(options={}){
     }
     ctx.restore();
   });
-  cv._mmScaleFactor=sf; cv._mmMapWidth=w; cv._mmMapHeight=h; cv._mmExportStats=exportStats;
+  let toggleCount=0;
+  canvas.querySelectorAll('.toggle').forEach(el=>{
+    const x=el.offsetLeft, y=el.offsetTop, ww=el.offsetWidth, hh=el.offsetHeight, cs=getComputedStyle(el);
+    const bw=parseFloat(cs.borderTopWidth)||0, br=parseFloat(cs.borderTopLeftRadius)||ww/2;
+    ctx.save();
+    _roundRect(ctx,x,y,ww,hh,br); ctx.fillStyle=cs.backgroundColor||'#ffffff'; ctx.fill();
+    if(bw>0){ _roundRect(ctx,x+bw/2,y+bw/2,ww-bw,hh-bw,Math.max(0,br-bw/2)); ctx.lineWidth=bw; ctx.strokeStyle=cs.borderTopColor||cs.color||'#9fb3c8'; ctx.stroke(); }
+    const glyph=el.querySelector('svg'), lines=glyph?[...glyph.querySelectorAll('line')]:[];
+    if(glyph && lines.length){
+      const er=el.getBoundingClientRect(), gr=glyph.getBoundingClientRect(), sc=scale||1;
+      const vb=(glyph.getAttribute('viewBox')||'0 0 1 1').trim().split(/[\s,]+/).map(Number), vw=vb[2]||1, vh=vb[3]||1;
+      const gx=x+(gr.left-er.left)/sc, gy=y+(gr.top-er.top)/sc, gw=gr.width/sc, gh=gr.height/sc;
+      ctx.strokeStyle=cs.color||'#9fb3c8'; ctx.lineWidth=parseFloat(getComputedStyle(lines[0]).strokeWidth)||bw||2; ctx.lineCap='round';
+      lines.forEach(line=>{
+        const x1=Number(line.getAttribute('x1')), y1=Number(line.getAttribute('y1')), x2=Number(line.getAttribute('x2')), y2=Number(line.getAttribute('y2'));
+        if(![x1,y1,x2,y2].every(Number.isFinite)) return;
+        ctx.beginPath(); ctx.moveTo(gx+(x1-vb[0])*gw/vw,gy+(y1-vb[1])*gh/vh); ctx.lineTo(gx+(x2-vb[0])*gw/vw,gy+(y2-vb[1])*gh/vh); ctx.stroke();
+      });
+    }
+    ctx.restore(); toggleCount++;
+  });
+  cv._mmScaleFactor=sf; cv._mmMapWidth=w; cv._mmMapHeight=h; cv._mmExportStats=exportStats; cv._mmToggleCount=toggleCount;
   return cv;
 }
 window.auditMindMapExportSupport=auditExportSupport;
@@ -3189,6 +3211,10 @@ code block
     const cv=renderMapToCanvas({skipRender:true});
     add('Canvas 匯出尺寸合理', !!(cv && cv.width>80 && cv.height>80 && cv._mmScaleFactor>0), cv?`${cv.width}x${cv.height}@${cv._mmScaleFactor}`:'no canvas');
     const bg=_canvasBackgroundRgb(cv);
+    const toggleEl=canvas.querySelector('.toggle');
+    const toggleRect=toggleEl ? {x:toggleEl.offsetLeft+7,y:toggleEl.offsetTop+7,w:4,h:4} : null;
+    const togglePix=_canvasPixelActivity(cv,toggleRect,bg);
+    add('Canvas 匯出保留收合按鈕符號', !!(toggleEl && cv && cv._mmToggleCount===canvas.querySelectorAll('.toggle').length), `${togglePix.active}/${togglePix.total}; ${cv&&cv._mmToggleCount||0}/${canvas.querySelectorAll('.toggle').length}`);
     const hrEl=canvas.querySelector('.node.hrnode');
     const hrRect=hrEl ? {x:hrEl.offsetLeft, y:hrEl.offsetTop+hrEl.offsetHeight/2-3, w:hrEl.offsetWidth, h:6} : null;
     const hrPix=_canvasPixelActivity(cv, hrRect, bg);
@@ -5499,9 +5525,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.11'
-      && APP_DATE === '2026-08-08'
-      && APP_TITLE === 'MK2MD v11.11'
+      && APP_VERSION === '11.12'
+      && APP_DATE === '2026-08-18'
+      && APP_TITLE === 'MK2MD v11.12'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
