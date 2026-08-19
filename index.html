@@ -2,8 +2,8 @@
 <!--
   ============================================================
   心智圖編輯器 (Mind Map Editor) — 單檔 HTML
-  Version: v11.12
-  Last updated: 2026-08-18
+  Version: v11.13
+  Last updated: 2026-08-19
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
      每次修改完成後,務必依根目錄 `AGENTS.md` 的版本規則與完整同步清單更新所有版本來源。
@@ -21,6 +21,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-08-19 v11.13：修正存檔 Markdown 混合標題/清單同層被重新解析成子節點，確保畫面階層與存檔後重新開啟一致。
   - 2026-08-18 v11.12：修正 JPG/PDF Canvas 匯出漏畫收合按鈕，現在會同步輸出圓框與 SVG 加減符號；新增匯出回歸檢查。
   - 2026-08-08 v11.11：SVG 收合符號改用填滿圓框內緣的 14px 對稱視窗與固定幾何中心，改善加減線段的光學置中。
   - 2026-08-08 v11.10：收合加減符號改為圓心固定的 SVG 線段，並與單元框線使用相同線寬，避免字型基線造成視覺偏心。
@@ -752,9 +753,9 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.12';
+const APP_VERSION = '11.13';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
-const APP_DATE = '2026-08-18';
+const APP_DATE = '2026-08-19';
 function syncAppTitle(){ document.title = APP_TITLE; }
 syncAppTitle();
 {
@@ -2567,7 +2568,18 @@ function buildMdRows(rootsArr){
       const lvl=Math.min(6, Math.max(2, depth+2));
       emit(node, '#'.repeat(lvl)+' ', '');
       emitNote(node);
-      for(const c of node.children) rec(c, depth+1);
+      const childDepth=depth+1;
+      const hasHeadingSibling=node.children.some(c=>c.kind==='h');
+      for(const c of node.children){
+        // 同一父節點下若已有標題子節點,其他一般清單節點也是同層資料；
+        // 直接輸出成同級標題,避免 `### A` 後接 `- B` 被重新解析成 A 的子節點。
+        if(hasHeadingSibling && c.kind==='ul'){
+          const clvl=Math.min(6, Math.max(2, childDepth+2));
+          emit(c, '#'.repeat(clvl)+' ', '');
+          emitNote(c);
+          for(const gc of c.children) rec(gc, childDepth+1);
+        } else rec(c, childDepth);
+      }
       return;
     }
     if(node.kind==='p'){                      // 純文字段落 → 原樣輸出(無標記),保留原始順序
@@ -5080,6 +5092,13 @@ function runMarkdownRuleSelfTest(options={}){
     parsed=parseMarkdown('# T\n3) 第三步\n4) 第四步\n');
     out=toMarkdown(parsed);
     add('有序清單保留原始編號與 ) marker', /^3\) 第三步$/m.test(out) && /^4\) 第四步$/m.test(out), out);
+    const mixedRoot=makeNode('訓練'); mixedRoot.kind='h';
+    const mixedParent=makeNode('4. 極限'); mixedParent.kind='h'; mixedParent.parent=mixedRoot;
+    const mixedHeading=makeNode('啟動步伐'); mixedHeading.kind='h'; mixedHeading.parent=mixedParent;
+    const mixedSibling=makeNode('正反手殺球'); mixedSibling.kind='ul'; mixedSibling.parent=mixedParent;
+    mixedRoot.children=[mixedParent]; mixedParent.children=[mixedHeading,mixedSibling];
+    const mixedOut=toMarkdown([mixedRoot]), mixedRound=parseMarkdown(mixedOut), mixedKids=mixedRound[0]&&mixedRound[0].children[0]&&mixedRound[0].children[0].children;
+    add('混合標題與清單同層存檔後保持同層', !!(mixedKids && mixedKids.length===2 && mixedKids.map(n=>n.title).join('|')==='啟動步伐|正反手殺球'), mixedOut);
     parsed=parseMarkdown('# T\n- 第一點\n  這是延續段落\n');
     out=toMarkdown(parsed);
     add('清單縮排文字保留為同一項延續段落', /- 第一點\n  這是延續段落/.test(out), out);
@@ -5525,9 +5544,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.12'
-      && APP_DATE === '2026-08-18'
-      && APP_TITLE === 'MK2MD v11.12'
+      && APP_VERSION === '11.13'
+      && APP_DATE === '2026-08-19'
+      && APP_TITLE === 'MK2MD v11.13'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
