@@ -23,7 +23,7 @@ function Test-TransientStartupFailure {
   return $Message -match '(?i)(permission denied|not recognized|not found|cannot find|not accessible|access is denied)'
 }
 
-$deployPath = Join-Path $script:RepoRoot 'deploy.ps1'
+$deployPath = Join-Path $script:RepoRoot 'scripts/deploy.ps1'
 $arguments = @('-NoProfile', '-File', $deployPath)
 if ($DryRun) { $arguments += '-DryRun' }
 if ($ExpectedHead) { $arguments += @('-ExpectedHead', $ExpectedHead) }

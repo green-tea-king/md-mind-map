@@ -1,70 +1,61 @@
 # MK2MD
 
-MK2MD 是單檔 HTML Markdown 心智圖編輯器。
+MK2MD 是單檔 HTML Markdown 心智圖編輯器。正式網站仍由根目錄的 `index.html` 提供；可離線直接開啟，也可部署至既有 GitHub Pages。
 
-正式入口是 `index.html`，可直接用 GitHub Pages 發佈，也可以在本機用瀏覽器開啟。
-
-Live site:
-
-https://green-tea-king.github.io/md-mind-map/
+正式網址：<https://green-tea-king.github.io/md-mind-map/>
 
 ## Current Version
 
-- Version: `v11.13`
-- Date: `2026-08-19`
-- Tracked app file: `index.html`
+- Version: `v11.15`
+- Date: `2026-11-04`
+- 正式入口：`index.html`
+- 可維護來源：`src/`
 
-## Main Features
+## 快速啟動
 
-- Markdown 匯入與匯出
-- 心智圖節點編輯、拖曳、排序、收合
-- 右鍵選單、指令面板、搜尋與定位
-- Markdown 標題、清單、引用、表格、程式碼、警示框、腳註；清單操作使用切換語意，圖示操作分開加圖示與清除，分隔線操作明確標示節點上方/下方，剪貼簿操作分開複製貼上與危險操作，警示框與跳脫符號可由節點右鍵文字格式套用
-- `---` 水平分隔線支援，顯示為單純分隔線，不當成子節點
-- JPG、PDF、Markdown、HTML 靜態展示匯出；HTML 檔只保留平移、縮放與置中檢視，不保留編輯、儲存或再次匯出功能；JPG/PDF 會依目前模式保留 HTML 純文字框或安全顯示的 summary、段落、清單與行內格式
-- 內建範本包含 HTML details 區塊;預設純文字,可切換白名單安全顯示
-- 匯出前檢查報告與安全修正
+在 Windows 檔案總管雙擊根目錄的「啟動 MK2MD.bat」，或直接以瀏覽器開啟 `index.html`。此工具不需安裝、不需登入；編輯內容請手動匯出 Markdown 保存。
 
-## Save Model
+## 專案結構
 
-本工具採手動保存流程。
+- `src/core/`：版本、資料模型、Markdown 解析／序列化與版面邏輯。
+- `src/features/`：渲染、編輯、拖曳、匯出、搜尋、選單等功能。
+- `src/styles/`：主題、面板與版面樣式。
+- `src/templates/`：HTML 外殼及預設內容。
+- `assets/brand/`：品牌圖示與授權標示；建置時會內嵌至單檔 HTML。
+- `scripts/`：建置、測試與原平台部署工具。
+- `temp/`：受保護的本機舊檔／備份歸檔區，不會發布至網站。
+- `啟動 MK2MD.bat`：Windows 根目錄啟動器。
+- `README.md`、`AGENTS.md`、`PROJECT_RULES.md`、`CHANGELOG.md`：使用說明、工作規範、功能歸屬及版本歷程。
 
-- 編修內容不使用自動草稿
-- 離開頁面前請手動匯出 Markdown；HTML 只適合靜態展示分享
-- 取消舊草稿復原流程後，不再使用 `mm-auto-draft-v1`
+## 修改、建置與測試
+
+修改程式請編輯 `src/`，不要直接改產生的 `index.html`。在專案根目錄執行：
+
+```powershell
+node scripts/build.mjs --write
+node scripts/build.mjs --check
+node scripts/test-build.mjs
+node scripts/check-version-consistency.test.js
+node scripts/check-version-consistency.js
+pwsh -NoProfile -File scripts/test-deploy.ps1
+```
+
+每次可交付修改都要依 `AGENTS.md` 更新版號、日期與歷程，再重建 `index.html`。`node scripts/build.mjs --check` 確認發布單檔與所有來源完全一致。
 
 ## Deployment
 
-GitHub Pages 只發布建置目錄中的 `index.html` 與 `.nojekyll`，不會把維護用的 README、PROJECT_RULES 或備份檔放進網站。發布前會先執行版本一致性檢查，再用無頭 Chrome 執行完整 11 組自檢、背景拖曳與節點排序回歸；任一檢查失敗就停止部署。
-
-本機部署工具：
+仍使用原 GitHub Pages 專案 `green-tea-king/md-mind-map`，只發布根目錄 `index.html` 與 `.nojekyll`；不會建立新平台或專案。部署前需先完成版本、部署合約和 Chrome 驗證。正式部署只可用精確已提交的 HEAD：
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v11.13
+# Deploy v11.15
 .\scripts\start-deploy.ps1 -ExpectedHead $head
 ```
 
-`deploy.ps1` 是納入版本控制的 fail-closed 工具，但不會被放進 GitHub Pages artifact。它不會自動 commit；正式模式只接受已提交的精確 HEAD，確認原 repository／branch／remote 關係後才 push，並要求同一 HEAD 的 Actions run、正式站來源 SHA-256 與 Chrome 11/11 都通過。
+`scripts/start-deploy.ps1` 是 Windows 啟動入口，`scripts/deploy.ps1` 是 fail-closed 部署工具。部署不會自動 commit；需要通過相同 HEAD 的 Actions、正式站雜湊與 Chrome 驗證。`-DryRun` 僅執行本機閘門，不會 push 或驗證正式站。
 
-部署前的遠端分支 SHA 以 `git ls-remote` 直接讀取；不會用 `git fetch` 寫回 WebDAV 上的本機 `origin/master` tracking ref。
+## 保存與歸檔
 
-可先執行 `.\scripts\start-deploy.ps1 -DryRun`，只跑本機版本、Git、來源與 Chrome 閘門，不 push、不等待 Actions，也不驗證正式站。`deploy.ps1` 仍是實際部署工具；`start-deploy.ps1` 負責在 WebDAV 瞬斷時從本機 Temp cwd 重試啟動。
+MK2MD 不使用自動草稿。編修後請手動匯出 Markdown；HTML 僅供靜態展示。`temp/` 是受保護歸檔區，不可當成快取清空；移入前應記錄來源、用途和 SHA-256。沒有經確認的舊檔就不移動或刪除。
 
-## Local Files
-
-以下檔案目前建議保留本機，不納入 GitHub Pages：
-
-- `clear-auto-draft.html`: 舊草稿清理工具，草稿功能移除後只作歷史備援
-- `MD心智圖_v10_00.html`: 舊版備份檔
-
-## Maintenance Rules
-
-- 修改前先讀 `AGENTS.md`；UI 變更再讀 `PROJECT_RULES.md`
-- 右鍵選單是完整功能入口；上方工具列只作高頻快捷入口
-- 診斷/自檢是維護功能，不顯示在一般右鍵選單；需要時用命令面板搜尋
-- 每次修改 `index.html` 要同步更新檔頭版本、`APP_VERSION`、`APP_DATE` 與 Changelog
-- 以桌面版操作為準，不維護手機版入口或手機專用模式
-- 不要恢復自動草稿機制
-- 刪除檔案前必須先確認
-- 部署後要用 live URL 驗證版本與自測狀態
+品牌圖示採 Flaticon 上 Magnific 的 Mindmap 圖示；應用程式內保留可見署名，詳見 `assets/brand/ATTRIBUTION.md`。

@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$script:RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $script:ExpectedRepoSlug = 'green-tea-king/md-mind-map'
 $script:ExpectedBranch = 'master'
 $script:LiveUrl = 'https://green-tea-king.github.io/md-mind-map/'
@@ -17,14 +17,8 @@ $script:CdpMinimumObservationMilliseconds = 2000
 $script:CdpQuietWindowMilliseconds = 500
 $script:CdpMaximumObservationMilliseconds = 5000
 $script:GitNativeMaxAttempts = 3
-$script:ProtectedUntracked = @(
-  'BACKUP_MANIFEST.md',
-  'MD心智圖_v10_00.html',
-  'agent.md',
-  'clear-auto-draft.html',
-  'design.md',
-  'repository-history.bundle'
-)
+$script:ProtectedUntracked = @()
+$script:ProtectedPaths = @('temp')
 
 function Get-RemainingMilliseconds {
   param(
@@ -223,8 +217,33 @@ function Get-ProtectedSnapshot {
   $snapshot = [ordered]@{}
   foreach ($path in $Paths) {
     $fullPath = Join-Path $Repo $path
-    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Protected file missing: $path" }
-    $snapshot[$path] = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+    if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+      $snapshot[$path] = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
+      continue
+    }
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Container) -or
+        ((Get-Item -LiteralPath $fullPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "Protected path is missing or is not a plain file/directory: $path"
+    }
+
+    $rootPath = (Resolve-Path -LiteralPath $fullPath -ErrorAction Stop).ProviderPath.TrimEnd('\', '/')
+    $records = [Collections.Generic.List[string]]::new()
+    foreach ($entry in @(Get-ChildItem -LiteralPath $rootPath -Force -Recurse -ErrorAction Stop)) {
+      if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "Protected directory contains a reparse point: $($entry.FullName)"
+      }
+      $relativePath = $entry.FullName.Substring($rootPath.Length).TrimStart('\', '/') -replace '\\', '/'
+      if ($entry.PSIsContainer) {
+        $records.Add("D`t$relativePath")
+      } else {
+        $fileHash = (Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash
+        $records.Add("F`t$relativePath`t$fileHash")
+      }
+    }
+    $recordArray = $records.ToArray()
+    [Array]::Sort($recordArray, [StringComparer]::Ordinal)
+    $manifest = [Text.Encoding]::UTF8.GetBytes(($recordArray -join "`n"))
+    $snapshot[$path] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($manifest))
   }
   return $snapshot
 }
@@ -1445,8 +1464,12 @@ function Get-RepositoryContext {
   if ($trackedStatus.Count -gt 0) { throw "Tracked repository status is not clean: $($trackedStatus -join ', ')" }
   $untracked = @($statusLines | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
   Assert-ExactUntrackedSet -Actual $untracked -Expected $script:ProtectedUntracked
-  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
+  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedPaths
 
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
+    -Arguments @('scripts/test-build.mjs') -Repo $Repo)
+  [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
+    -Arguments @('scripts/build.mjs', '--check') -Repo $Repo)
   [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
     -Arguments @('scripts/check-version-consistency.test.js') -Repo $Repo)
   [void](Invoke-RepositoryNative -Native $Native -FilePath 'node' `
@@ -1511,7 +1534,7 @@ process.stdout.write(JSON.stringify({version,date}));
     @((Invoke-RepositoryNative -Native $Native -FilePath 'git' `
       -Arguments @('diff', '--name-only', "$remoteHead..$head") -Repo $Repo).StdOut -split "`r?`n" | Where-Object { $_ })
   } else { @() }
-  $afterProbeHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
+  $afterProbeHashes = & $SnapshotProvider $Repo $script:ProtectedPaths
   Assert-ProtectedSnapshot -Before $protectedHashes -After $afterProbeHashes
 
   return [pscustomobject]@{
@@ -1570,7 +1593,7 @@ function Get-RepositoryState {
     -split "`r?`n" | Where-Object { $_ })
   $trackedStatus = @($statusLines | Where-Object { -not $_.StartsWith('?? ') })
   $untracked = @($statusLines | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
-  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedUntracked
+  $protectedHashes = & $SnapshotProvider $Repo $script:ProtectedPaths
 
   return [pscustomobject]@{
     Branch = $branch
@@ -1938,7 +1961,7 @@ function New-DeploymentAdapters {
     }
     LocalSource = { [IO.File]::ReadAllBytes((Join-Path $script:RepoRoot 'index.html')) }
     LiveSource = { param($url, $timeoutSeconds) Get-LiveSourceBytes -Url $url -TimeoutSeconds $timeoutSeconds }
-    ProtectedSnapshot = { Get-ProtectedSnapshot -Repo $script:RepoRoot -Paths $script:ProtectedUntracked }
+    ProtectedSnapshot = { Get-ProtectedSnapshot -Repo $script:RepoRoot -Paths $script:ProtectedPaths }
     Sleep = { param($seconds) Start-Sleep -Seconds $seconds }
   }
   if ($null -ne $Overrides) {

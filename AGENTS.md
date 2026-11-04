@@ -1,6 +1,6 @@
 # MK2MD 專案維護規範
 
-本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v11.13`（`2026-08-19`）。預設使用台灣繁體中文協作。
+本規範是工程師與 Codex 修改專案前的第一入口。基準版本為 `v11.15`（`2026-11-04`）。預設使用台灣繁體中文協作。
 
 ## 1. 工作範圍與優先順序
 
@@ -20,7 +20,7 @@
 5. UI 變更時閱讀 `PROJECT_RULES.md`。
 6. 與需求直接相關的程式碼、測試與已核准規格。
 
-正式產品是單一 `index.html`，包含 HTML、CSS、JavaScript、預設 Markdown 與 11 組自我測試。GitHub Pages workflow 只發布 `index.html` 與 `.nojekyll`；README 與維護文件不會進入網站 artifact。
+可維護來源分置 `src/core/`、`src/features/`、`src/styles/` 與 `src/templates/`；以 `node scripts/build.mjs --write` 產生根目錄單檔 `index.html`。正式產品仍是單一 HTML，內嵌 HTML、CSS、JavaScript、品牌圖示、預設 Markdown 與 11 組自我測試。GitHub Pages workflow 只發布 `index.html` 與 `.nojekyll`；README 與維護文件不會進入網站 artifact。修改 `src/` 後必須重建並以 `node scripts/build.mjs --check` 確認產物一致。
 
 ## 3. 不可自行推翻的產品決策
 
@@ -70,18 +70,19 @@
 每次版本至少同步：
 
 1. `AGENTS.md` 首段基準版本與日期。
-2. `index.html` 檔頭 Version 與 Last updated。
-3. `APP_VERSION` 與 `APP_DATE`。
-4. 最新 Changelog 項目。
-5. 品牌自我測試內的 `APP_VERSION === '<current>'` 預期值。
-6. 品牌自我測試內的 `APP_TITLE === 'MK2MD v<current>'` 預期值。
-7. README Current Version、日期與部署範例。
+2. `src/templates/index.html` 檔頭 Version、Last updated 與最新 Changelog 項目。
+3. `src/core/bootstrap.js` 的 `APP_VERSION` 與 `APP_DATE`。
+4. `src/features/default-template.js` 品牌自我測試內的版本、日期與標題預期值。
+5. README Current Version、日期與部署範例。
+6. 根目錄 `CHANGELOG.md` 最新項目。
+7. 執行 `node scripts/build.mjs --write` 更新正式 `index.html`。
 
 不要改寫舊 Changelog 或歷史檔名。
 
 ## 7. 必要驗證
 
 - 用 Node `vm.Script` 解析 HTML header comment 之後抽出的 app script；應為 1 個 inline script。
+- 執行 `node scripts/test-build.mjs` 與 `node scripts/build.mjs --check`，確認來源建置為單一 HTML 且產物同步。
 - 執行 `node scripts/check-version-consistency.test.js` 與 `node scripts/check-version-consistency.js`；測試與實際 repository gate 都必須通過。
 - `git diff --check` 必須無輸出。
 - 以本機 HTTP server 與 installed Chrome 執行 `?ci-selftest=1`；應為 `11/11`、0 failed。
@@ -98,10 +99,10 @@
 - staging 使用明確 allowlist，禁止 `git add .`。
 - commit 前執行 `git diff --cached --check` 與 `git diff --cached --name-only`。
 - 不覆蓋、不 reset、不 checkout 使用者既有變更。
-- `deploy.ps1` 是受版本控制的 fail-closed 部署工具；正式部署先取得 `$head = (git rev-parse HEAD).Trim()`，再執行 `.\deploy.ps1 -ExpectedHead $head`，不得以工具自動 commit。
-- WebDAV 環境正式啟動優先使用 `scripts/start-deploy.ps1`；它只負責以本機 Temp cwd 有限重試啟動 `deploy.ps1`，不得繞過部署工具的 fail-closed 閘門。
-- `deploy.ps1 -DryRun` 只執行本機閘門，不 push、不等待 Actions、不驗證正式站；正式模式必須綁定精確 HEAD 的 Actions run、正式站來源雜湊與 Chrome 11/11 結果。
-- `deploy.ps1` 納入 Git 後，仍保留六個未追蹤本機檔案：`BACKUP_MANIFEST.md`、`MD心智圖_v10_00.html`、`agent.md`、`clear-auto-draft.html`、`design.md`、`repository-history.bundle`；不得自行清理、stage 或修改。
+- `scripts/deploy.ps1` 是受版本控制的 fail-closed 部署工具；正式部署先取得 `$head = (git rev-parse HEAD).Trim()`，再執行 `scripts/start-deploy.ps1 -ExpectedHead $head`，不得以工具自動 commit。
+- WebDAV 環境正式啟動使用根目錄 `啟動 MK2MD.bat` 開啟 app；維護部署使用 `scripts/start-deploy.ps1`，它只負責以本機 Temp cwd 有限重試啟動 `scripts/deploy.ps1`，不得繞過部署工具的 fail-closed 閘門。
+- `scripts/deploy.ps1 -DryRun` 只執行本機閘門，不 push、不等待 Actions、不驗證正式站；正式模式必須綁定精確 HEAD 的 Actions run、正式站來源雜湊與 Chrome 11/11 結果。
+- 本機歷史備份與舊維護資料集中保存在根目錄 `temp/`，此目錄由 `.gitignore` 排除、不會進入 Pages artifact，部署工具會在檢查前後計算整個目錄樹的 SHA-256。不得清理、stage 或修改其中內容；若需要新增、移動或更新備份，須同步調整備份用途說明與保護測試。
 
 ## 9. 原平台部署
 

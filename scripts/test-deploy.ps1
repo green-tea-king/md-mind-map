@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repo = Split-Path -Parent $PSScriptRoot
-$deployPath = Join-Path $repo 'deploy.ps1'
+$deployPath = Join-Path $repo 'scripts/deploy.ps1'
 $script:passed = 0
 $script:failed = 0
 
@@ -455,6 +455,8 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       '^git diff --quiet$' { 'git:working-diff'; break }
       '^git diff --cached --quiet$' { 'git:staged-diff'; break }
       '^git -c core\.quotepath=false status --porcelain=v1 -uall$' { 'git:status'; break }
+      '^node scripts/test-build\.mjs$' { 'node:build-test'; break }
+      '^node scripts/build\.mjs --check$' { 'node:build-check'; break }
       '^node scripts/check-version-consistency\.test\.js$' { 'node:version-test'; break }
       '^node scripts/check-version-consistency\.js$' { 'node:version-gate'; break }
       '^node -e ' { 'node:vm-script'; break }
@@ -501,7 +503,7 @@ function New-ProductionPreflightFixture([Collections.IDictionary]$Scenario = @{}
       'git:remote-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'local-ahead')) { 0 } else { 1 }; ''; break }
       'git:local-ancestor' { $exitCode = if ($settings.Relation -in @('equal', 'remote-ahead')) { 0 } else { 1 }; ''; break }
       'git:log' { "$head fixture commit"; break }
-      'git:changed-paths' { 'deploy.ps1'; break }
+      'git:changed-paths' { 'scripts/deploy.ps1'; break }
       default { ''; break }
     }
     $result = [pscustomobject]@{ ExitCode = $exitCode; StdOut = $stdout; StdErr = if ($exitCode) { 'fixture failure' } else { '' } }
@@ -544,7 +546,7 @@ Test-Case 'production repository preflight executes the exact checked command se
   Assert-True ($context.TrackingHead -eq $fixture.RemoteHead -and $context.TrackingState -eq 'current') 'tracking ref diagnosis was not retained'
   $expected = @(
     'git:branch', 'git:fetch-url', 'git:push-url', 'git:working-diff', 'git:staged-diff', 'git:status',
-    'snapshot:1', 'node:version-test', 'node:version-gate', 'node:vm-script', 'pwsh:contract', 'gh:auth', 'gh:permission',
+    'snapshot:1', 'node:build-test', 'node:build-check', 'node:version-test', 'node:version-gate', 'node:vm-script', 'pwsh:contract', 'gh:auth', 'gh:permission',
     'git:ls-remote', 'git:tracking-head', 'git:head', 'git:remote-ancestor', 'git:local-ancestor',
     'git:log', 'git:changed-paths', 'snapshot:2'
   )
@@ -554,14 +556,9 @@ Test-Case 'production repository preflight executes the exact checked command se
     Assert-True ($call.Repo -eq 'fixture') "repository command did not use injected repo: $($call.Key)"
     Assert-True ($call.TimeoutSeconds -gt 0) "repository command was unbounded: $($call.Key)"
   }
-  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After ([ordered]@{
-    'BACKUP_MANIFEST.md' = 'hash:BACKUP_MANIFEST.md'
-    'MD心智圖_v10_00.html' = 'hash:MD心智圖_v10_00.html'
-    'agent.md' = 'hash:agent.md'
-    'clear-auto-draft.html' = 'hash:clear-auto-draft.html'
-    'design.md' = 'hash:design.md'
-    'repository-history.bundle' = 'hash:repository-history.bundle'
-  })
+  Assert-True (($fixture.Calls | Where-Object Key -eq 'snapshot:1').ProtectedPaths -contains 'temp') `
+    'production preflight did not snapshot the temp archive directory'
+  Assert-ProtectedSnapshot -Before $context.ProtectedHashes -After ([ordered]@{ temp = 'hash:temp' })
 }
 
 Test-Case 'production preflight reports an unavailable local tracking ref without replacing remote evidence' {
@@ -684,8 +681,8 @@ Test-Case 'production final repository observation uses the checked native seam'
     'final state omitted branch, HEAD, or local master'
   Assert-True ($state.OriginHead -eq $head -and $state.RemoteHead -eq $head) 'final state omitted origin/master or remote HEAD'
   Assert-True ($state.TrackedClean -and $state.StagedClean) 'final state reported clean fixtures as dirty'
-  Assert-True (@($state.Untracked).Count -eq 6) `
-    "final state did not preserve the exact untracked set: $(@($state.Untracked).Count) [$(@($state.Untracked) -join '|')]"
+  Assert-True (@($state.Untracked).Count -eq 0) `
+    "final state reported unexpected untracked paths: $(@($state.Untracked).Count) [$(@($state.Untracked) -join '|')]"
   Assert-True (@($calls | Where-Object { $_ -like 'git *' }).Count -ge 9) 'final state bypassed the production native seam'
 }
 
@@ -711,6 +708,15 @@ Test-Case 'protected snapshot drift throws' {
     Assert-ProtectedSnapshot -Before ([ordered]@{ 'a' = 'one' }) -After ([ordered]@{ 'a' = 'two' })
   } catch { $threw = $true }
   Assert-True $threw 'protected snapshot drift did not throw'
+}
+
+Test-Case 'protected archive directory is represented by a stable tree hash' {
+  $snapshot = Get-ProtectedSnapshot -Repo $repo -Paths @('temp')
+  Assert-True ($snapshot.Count -eq 1 -and $snapshot.Contains('temp')) 'archive directory snapshot key is missing'
+  Assert-True ([string]$snapshot['temp'] -match '^[A-F0-9]{64}$') 'archive directory snapshot is not a SHA-256 hash'
+  $threw = $false
+  try { Assert-ProtectedSnapshot -Before $snapshot -After ([ordered]@{ temp = ('0' * 64) }) } catch { $threw = $true }
+  Assert-True $threw 'archive directory hash drift did not stop deployment'
 }
 
 Test-Case 'expected-head mismatch throws outside dry run' {
@@ -1116,7 +1122,7 @@ function New-TestRepositoryContext([string]$Relation) {
     Version = '10.77'
     Date = '2026-07-17'
     Commits = @('fixture commit')
-    ChangedPaths = @('deploy.ps1')
+    ChangedPaths = @('scripts/deploy.ps1')
     Untracked = @($script:ProtectedUntracked)
     ProtectedHashes = [ordered]@{ fixture = 'same' }
   }

@@ -24,7 +24,7 @@ function consistentSources() {
       '```powershell',
       '$head = (git rev-parse HEAD).Trim()',
       '# Deploy v10.76',
-      '.\\deploy.ps1 -ExpectedHead $head',
+      '.\\scripts\\deploy.ps1 -ExpectedHead $head',
       '```',
       '',
       '## Local Files'
@@ -120,8 +120,8 @@ test('reports a README deploy comment version mismatch', () => {
 test('rejects the legacy deploy Message command structure', () => {
   const sources = consistentSources();
   sources.readmeText = sources.readmeText.replace(
-    '.\\deploy.ps1 -ExpectedHead $head',
-    '.\\deploy.ps1 -Message "Deploy v10.76"'
+    '.\\scripts\\deploy.ps1 -ExpectedHead $head',
+    '.\\scripts\\deploy.ps1 -Message "Deploy v10.76"'
   );
   const result = validateVersionConsistency(sources);
   assert.match(issueFor(result, 'README deploy command').actual, /0 matches/);
@@ -130,7 +130,7 @@ test('rejects the legacy deploy Message command structure', () => {
 test('accepts the WebDAV-safe deployment launcher command', () => {
   const sources = consistentSources();
   sources.readmeText = sources.readmeText.replace(
-    '.\\deploy.ps1 -ExpectedHead $head',
+    '.\\scripts\\deploy.ps1 -ExpectedHead $head',
     '.\\scripts\\start-deploy.ps1 -ExpectedHead $head'
   );
   const result = validateVersionConsistency(sources);

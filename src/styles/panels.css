@@ -1,0 +1,83 @@
+/* ===== 右側原始 Markdown 面板(雙向同步) ===== */
+  :root{ --mdw:360px; }
+  html.md-open #app{ margin-right:var(--mdw); }
+  #mdPanel{ position:fixed; top:0; right:0; bottom:0; width:var(--mdw); z-index:150; background:var(--panel);
+    border-left:1px solid var(--line); display:none; flex-direction:column; box-shadow:-4px 0 18px rgba(20,40,80,.10); }
+  html.md-open #mdPanel{ display:flex; }
+  #mdResize{ position:absolute; left:-3px; top:0; bottom:0; width:7px; cursor:col-resize; z-index:3; }
+  #mdResize:hover{ background:rgba(47,111,237,.30); }
+  #mdHead{ display:flex; align-items:center; gap:8px; padding:9px 12px; font-size:12px; font-weight:700;
+    letter-spacing:.4px; color:#5a6470; background:#eef2f7; border-bottom:1px solid var(--line); user-select:none; }
+  #mdHead .mdsp{ margin-left:auto; }
+  #mdHead button{ border:none; background:transparent; cursor:pointer; font-size:14px; color:#5a6470;
+    width:24px; height:24px; border-radius:6px; line-height:1; padding:0; }
+  #mdHead button:hover{ background:#fff; }
+  #mdWrap{ position:relative; flex:1; overflow:hidden; }
+  #mdHi{ position:absolute; left:0; right:0; top:0; height:22px; display:none; pointer-events:none; z-index:1;
+    background:rgba(47,111,237,.13); border-left:3px solid var(--accent);
+    border-top:1px solid rgba(47,111,237,.32); border-bottom:1px solid rgba(47,111,237,.32);
+    box-shadow:inset 0 0 0 999px rgba(47,111,237,.035); }
+  #mdText{ position:absolute; inset:0; width:100%; height:100%; resize:none; border:none; outline:none; z-index:2;
+    background:transparent; color:var(--txt); font:13px/22px ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;
+    padding:12px 14px; white-space:pre; overflow:auto; tab-size:2; }
+  #mdInfo{ padding:7px 12px; font-size:11px; line-height:1.35; color:#8f9aa8; border-top:1px solid var(--line);
+    user-select:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+  #mdInfo span{ white-space:nowrap; }
+  #mdInfo.warn{ color:#b45309; background:rgba(245,158,11,.10); }
+  #mdInfo.error{ color:#b91c1c; background:rgba(239,68,68,.10); }
+  #mdInfo.jump{ cursor:pointer; }
+  #mdInfo.jump:hover{ text-decoration:underline; }
+  #mdTab{ position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:149; background:var(--accent);
+    color:#fff; border:none; cursor:pointer; writing-mode:vertical-rl; padding:14px 6px; border-radius:9px 0 0 9px;
+    font-size:12px; font-weight:700; letter-spacing:2px; box-shadow:-2px 2px 10px rgba(20,40,80,.18); }
+  #mdTab:hover{ filter:brightness(1.07); }
+  html.md-open #mdTab{ display:none; }
+  html.dark #mdHead{ background:#2b313b; color:#aeb6c2; }
+  html.dark #mdHead button{ color:#aeb6c2; }
+  html.dark #mdHead button:hover{ background:rgba(255,255,255,.12); }
+  html.dark #mdHi{ background:rgba(110,160,255,.16); border-color:rgba(110,160,255,.38); border-left-color:#6ea0ff; }
+  html.dark #mdInfo.warn{ color:#fbbf24; background:rgba(245,158,11,.13); }
+  html.dark #mdInfo.error{ color:#fca5a5; background:rgba(239,68,68,.13); }
+  /* ===== Markdown 表格(節點內以真正的表格呈現)===== */
+  .node.tablenode{ max-width:920px; }
+  .node .ntext.hastable{ display:block; white-space:normal; }
+  .node table.mdtable{ border-collapse:collapse; font-size:.93em; line-height:1.35; margin:1px 0; }
+  .node table.mdtable th,.node table.mdtable td{ border:var(--unit-line-width) solid rgba(120,132,148,.55);
+    padding:3px 9px; text-align:left; vertical-align:top; white-space:normal; }
+  .node table.mdtable th{ font-weight:700; background:rgba(120,132,148,.14); }
+  .node code.mdcode{ font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace;
+    font-size:.88em; color:var(--fx-code,#b45309); background:var(--fx-code-bg,rgba(245,158,11,.18)); padding:1px 5px; border-radius:4px; }
+  html.dark .node{ --fx-bold:#fb923c; --fx-em:#c4b5fd; --fx-del:#94a3b8; --fx-del-line:#f87171; --fx-link:#7dd3fc; --fx-link-line:rgba(125,211,252,.55); --fx-code:#fbbf24; --fx-code-bg:rgba(251,191,36,.18); }
+  html.dark .node table.mdtable th,html.dark .node table.mdtable td{ border-color:rgba(150,162,178,.5); }
+  html.dark .node table.mdtable th{ background:rgba(150,162,178,.16); }
+  /* ===== Markdown 水平分隔線(--- / *** / ___) ===== */
+  .node.hrnode{ width:170px; min-width:120px; max-width:none; padding:9px 0; opacity:1; cursor:grab;
+    background:transparent !important; border-width:0 !important; border-color:transparent !important; box-shadow:none !important; color:#64748b !important; }
+  .node.hrnode::before{ content:""; position:absolute; left:0; right:0; top:-8px; bottom:-8px; border-radius:8px; }
+  .node.hrnode:hover::before,.node.hrnode.sel::before{ background:rgba(47,111,237,.08); }
+  .node.hrnode:active{ cursor:grabbing; }
+  .node.hrnode .ntext{ display:block; width:100%; height:14px; white-space:normal; }
+  .node.hrnode .mdhr{ display:block; width:100%; height:14px; opacity:.9; margin:0; overflow:visible; }
+  .node.hrnode .mdhrline{ stroke:currentColor; stroke-width:var(--unit-line-width); stroke-linecap:round; stroke-dasharray:6 6; animation:hr-flow 1.5s linear infinite; }
+  @keyframes hr-flow{ from{stroke-dashoffset:0;} to{stroke-dashoffset:-12;} }
+  html.dark .node.hrnode{ color:#94a3b8 !important; }
+  html.dark .node.hrnode .mdhr{ opacity:.95; }
+  /* ===== Markdown 圍籬程式碼區塊 ===== */
+  .node.codenode{ max-width:920px; }
+  .node .ntext.hascode{ display:block; white-space:normal; }
+  .node pre.mdpre{ margin:2px 0; padding:8px 11px; border-radius:7px; background:rgba(120,132,148,.16);
+    font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace; font-size:.86em;
+    line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; max-width:880px; }
+  .node pre.mdpre code{ font-family:inherit; background:none; padding:0; white-space:inherit; }
+  html.dark .node pre.mdpre{ background:rgba(150,162,178,.16); }
+  /* ===== Markdown HTML 區塊(預設純文字,可切換白名單安全顯示) ===== */
+  .node.htmlnode{ max-width:920px; }
+  .node .ntext.hashtml{ display:block; white-space:normal; }
+  .node pre.mdhtmlraw{ margin:2px 0; padding:8px 11px; border-radius:7px; background:rgba(120,132,148,.16);
+    font-family:ui-monospace,"Cascadia Code",Menlo,Consolas,"Courier New",monospace; font-size:.86em;
+    line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; max-width:880px; }
+  .node .ntext.htmlsafe > *{ max-width:100%; }
+  .node .ntext.htmlsafe p,.node .ntext.htmlsafe blockquote{ margin:4px 0; }
+  .node .ntext.htmlsafe pre{ white-space:pre-wrap; overflow-wrap:anywhere; }
+  .node .ntext.htmlsafe img{ max-width:100%; height:auto; }
+  html.dark .node pre.mdhtmlraw{ background:rgba(150,162,178,.16); }

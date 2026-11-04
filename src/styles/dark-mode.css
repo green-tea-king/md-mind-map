@@ -1,0 +1,33 @@
+/* ===== 深色介面(切換 App 外觀;節點顏色固定使用 Vivid 自動調整)===== */
+  html.dark{ --bg:#14171c; --panel:#232830; --line:#39414d; --txt:#e6e9ee; --accent2:#2a3340; color-scheme:dark; }
+  html.dark #viewport{ background-color:#161a20;
+    background-image:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='40'%20height='40'%3E%3Cg%20fill='none'%20stroke='%23323a45'%20stroke-width='1'%20stroke-dasharray='4,4'%3E%3Cpath%20d='M0%200H40'/%3E%3Cpath%20d='M0%200V40'/%3E%3C/g%3E%3C/svg%3E"); }
+  html.dark .fwhead{ background:#2b313b; color:#aeb6c2; }
+  html.dark .fwcollapse{ color:#aeb6c2; }
+  html.dark .fwcollapse:hover{ background:rgba(255,255,255,.12); }
+  html.dark .fwbrand{ color:#6ea0ff; }
+  html.dark .save-state.saved{color:#5eead4;border-color:rgba(45,212,191,.42);background:rgba(45,212,191,.13);}
+  html.dark .save-state.dirty{color:#fbbf24;border-color:rgba(251,191,36,.42);background:rgba(251,191,36,.15);}
+  html.dark #searchBar{ background:var(--panel); }
+  html.dark #searchInput{ color:var(--txt); background:transparent; }
+  html.dark #searchBar button{ background:#2b313b; color:var(--txt); }
+  html.dark #searchWrap{ background:var(--panel); }
+  html.dark #searchHint{ background:#2b313b; color:#aeb6c2; }
+  html.dark .ctxmenu{ background:var(--panel); }
+  html.dark .cmdhead{ background:#2b313b; color:#aeb6c2; }
+  html.dark .report-head{ background:#2b313b; color:#cbd5e1; }
+  html.dark .report-action{ background:rgba(35,40,48,.72); color:#aeb6c2; }
+  html.dark .report-action.primary{ background:var(--accent); border-color:var(--accent); color:white; }
+  html.dark .report-action.safe{ background:rgba(16,185,129,.14); border-color:rgba(16,185,129,.35); color:#86efac; }
+  html.dark .report-action.quiet{ background:transparent; border-color:transparent; color:#7b8794; }
+  html.dark .report-group{ background:rgba(35,40,48,.72); }
+  html.dark #status{ background:rgba(20,23,28,.85); color:#aeb6c2; }
+  html.dark #status .status-main{ color:#cbd5e1; }
+  html.dark #status .status-help{ color:#8b94a3; }
+  html.dark #status.info .status-msg{ color:#93c5fd; }
+  html.dark #status.warn .status-msg{ color:#fbbf24; }
+  html.dark #status.error .status-msg{ color:#fca5a5; }
+  html.dark .hint{ background:rgba(20,23,28,.6); color:#8b94a3; }
+  html.dark #empty{ color:#8b94a3; }
+  html.dark #empty b{ color:#aeb6c2; }
+
