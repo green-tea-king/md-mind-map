@@ -6,7 +6,7 @@ MK2MD 是單檔 HTML Markdown 心智圖編輯器。正式網站仍由根目錄�
 
 ## Current Version
 
-- Version: `v11.15`
+- Version: `v11.16`
 - Date: `2026-11-04`
 - 正式入口：`index.html`
 - 可維護來源：`src/`
@@ -48,7 +48,7 @@ pwsh -NoProfile -File scripts/test-deploy.ps1
 
 ```powershell
 $head = (git rev-parse HEAD).Trim()
-# Deploy v11.15
+# Deploy v11.16
 .\scripts\start-deploy.ps1 -ExpectedHead $head
 ```
 

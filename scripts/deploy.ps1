@@ -217,6 +217,21 @@ function Get-ProtectedSnapshot {
   $snapshot = [ordered]@{}
   foreach ($path in $Paths) {
     $fullPath = Join-Path $Repo $path
+    $pathExists = Test-Path -LiteralPath $fullPath -ErrorAction Stop
+    if (-not $pathExists) {
+      $parentPath = Split-Path -Parent $fullPath
+      $leafName = Split-Path -Leaf $fullPath
+      if (-not (Test-Path -LiteralPath $parentPath -PathType Container -ErrorAction Stop)) {
+        throw "Protected path parent is missing or inaccessible: $path"
+      }
+      $parentEntries = @(Get-ChildItem -LiteralPath $parentPath -Force -ErrorAction Stop)
+      if (@($parentEntries | Where-Object { $_.Name -ceq $leafName }).Count -gt 0) {
+        throw "Protected path exists but could not be resolved: $path"
+      }
+      $missingManifest = [Text.Encoding]::UTF8.GetBytes("MISSING`t$path")
+      $snapshot[$path] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($missingManifest))
+      continue
+    }
     if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
       $snapshot[$path] = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash
       continue

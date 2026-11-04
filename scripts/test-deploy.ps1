@@ -710,6 +710,26 @@ Test-Case 'protected snapshot drift throws' {
   Assert-True $threw 'protected snapshot drift did not throw'
 }
 
+Test-Case 'missing local archive directory is stable and detected if it appears' {
+  $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('mk2md-protected-archive-' + [guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($fixtureRoot)
+  try {
+    $before = Get-ProtectedSnapshot -Repo $fixtureRoot -Paths @('temp')
+    $beforeAgain = Get-ProtectedSnapshot -Repo $fixtureRoot -Paths @('temp')
+    Assert-True ($before.Count -eq 1 -and $before.Contains('temp')) 'missing archive snapshot key is missing'
+    Assert-True ([string]$before['temp'] -match '^[A-F0-9]{64}$') 'missing archive snapshot is not a SHA-256 hash'
+    Assert-ProtectedSnapshot -Before $before -After $beforeAgain
+
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixtureRoot 'temp'))
+    $after = Get-ProtectedSnapshot -Repo $fixtureRoot -Paths @('temp')
+    $threw = $false
+    try { Assert-ProtectedSnapshot -Before $before -After $after } catch { $threw = $true }
+    Assert-True $threw 'archive creation after an absent-directory snapshot did not stop deployment'
+  } finally {
+    Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+  }
+}
+
 Test-Case 'protected archive directory is represented by a stable tree hash' {
   $snapshot = Get-ProtectedSnapshot -Repo $repo -Paths @('temp')
   Assert-True ($snapshot.Count -eq 1 -and $snapshot.Contains('temp')) 'archive directory snapshot key is missing'

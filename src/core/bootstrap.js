@@ -13,7 +13,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.15';
+const APP_VERSION = '11.16';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-11-04';
 function syncAppTitle(){ document.title = APP_TITLE; }

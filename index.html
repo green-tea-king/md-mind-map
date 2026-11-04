@@ -2,7 +2,7 @@
 <!--
   ============================================================
   MK2MD 心智圖編輯器 — 發布時維持單檔 HTML；可維護來源位於 src/
-  Version: v11.15
+  Version: v11.16
   Last updated: 2026-11-04
   ------------------------------------------------------------
   ⚠ 維護規範(任何人或 AI 接手修改本檔,都必須遵守):
@@ -22,6 +22,7 @@
      H. 啟動範例                : 預設 Markdown 範本,應展示所有主要功能
   ------------------------------------------------------------
   修改紀錄 Changelog(最新在最上):
+  - 2026-11-04 v11.16：部署保護可在乾淨 checkout 中辨識尚不存在的 temp/，仍以目錄出現或內容變更作為保護雜湊差異。
   - 2026-11-04 v11.15：將可維護來源整理至 src/ 並以腳本產生根目錄單檔；新增啟動器、專案說明與完整變更歷程，統一 MK2MD 品牌圖示。
   - 2026-10-03 v11.14：將本機舊版與維護備份集中保存在 temp，並讓部署前後以目錄樹 SHA-256 保護備份內容。
   - 2026-08-19 v11.13：修正存檔 Markdown 混合標題/清單同層被重新解析成子節點，確保畫面階層與存檔後重新開啟一致。
@@ -761,7 +762,7 @@
 */
 //===================== 版次資訊(修改本檔請同步更新,並更新檔頭註解與 Changelog)=====================
 const APP_NAME = 'MK2MD';
-const APP_VERSION = '11.15';
+const APP_VERSION = '11.16';
 const APP_TITLE = APP_NAME + ' v' + APP_VERSION;
 const APP_DATE = '2026-11-04';
 function syncAppTitle(){ document.title = APP_TITLE; }
@@ -5554,9 +5555,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.15'
+      && APP_VERSION === '11.16'
       && APP_DATE === '2026-11-04'
-      && APP_TITLE === 'MK2MD v11.15'
+      && APP_TITLE === 'MK2MD v11.16'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME

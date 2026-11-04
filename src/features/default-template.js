@@ -549,9 +549,9 @@ function runCommandPaletteSelfTest(options={}){
     const diagnostics = collectDiagnostics();
     add('現行品牌名稱集中為 MK2MD',
       APP_NAME === 'MK2MD'
-      && APP_VERSION === '11.15'
+      && APP_VERSION === '11.16'
       && APP_DATE === '2026-11-04'
-      && APP_TITLE === 'MK2MD v11.15'
+      && APP_TITLE === 'MK2MD v11.16'
       && document.title === APP_TITLE
       && !!brandNameEl
       && brandNameEl.textContent === APP_NAME
